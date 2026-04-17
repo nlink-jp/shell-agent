@@ -264,6 +264,12 @@ func (s *Store) Load(id string) (*Session, error) {
 	return &session, nil
 }
 
+// Delete removes a session from disk.
+func (s *Store) Delete(id string) error {
+	path := filepath.Join(s.dir, id+".json")
+	return os.Remove(path)
+}
+
 // List returns all session metadata (without full records).
 func (s *Store) List() ([]Session, error) {
 	entries, err := os.ReadDir(s.dir)

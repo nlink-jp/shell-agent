@@ -78,16 +78,25 @@
 }
 
 .session-item {
-  padding: 10px 12px;
+  padding: 4px 8px 4px 12px;
   border-radius: 6px;
-  cursor: pointer;
   display: flex;
-  justify-content: space-between;
   align-items: center;
+  gap: 4px;
 }
 
 .session-item:hover {
   background: rgba(255, 255, 255, 0.08);
+}
+
+.session-info {
+  flex: 1;
+  cursor: pointer;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 6px 0;
+  min-width: 0;
 }
 
 .session-title {
@@ -102,6 +111,80 @@
   color: #666;
   flex-shrink: 0;
   margin-left: 8px;
+}
+
+.session-delete {
+  flex-shrink: 0;
+  width: 24px;
+  height: 24px;
+  border: none;
+  background: none;
+  color: #555;
+  cursor: pointer;
+  font-size: 12px;
+  border-radius: 4px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  opacity: 0;
+  transition: opacity 0.15s;
+}
+
+.session-item:hover .session-delete {
+  opacity: 1;
+}
+
+.session-delete:hover {
+  background: rgba(200, 60, 60, 0.3);
+  color: #f08080;
+}
+
+.delete-confirm {
+  margin: 8px;
+  padding: 10px 12px;
+  background: rgba(200, 60, 60, 0.15);
+  border: 1px solid rgba(200, 60, 60, 0.3);
+  border-radius: 6px;
+  font-size: 13px;
+}
+
+.delete-confirm span {
+  display: block;
+  margin-bottom: 8px;
+  color: #e08080;
+}
+
+.delete-confirm-actions {
+  display: flex;
+  gap: 8px;
+}
+
+.delete-yes {
+  padding: 4px 12px;
+  background: rgba(200, 60, 60, 0.3);
+  border: 1px solid rgba(200, 60, 60, 0.5);
+  border-radius: 4px;
+  color: #f08080;
+  cursor: pointer;
+  font-size: 12px;
+}
+
+.delete-yes:hover {
+  background: rgba(200, 60, 60, 0.5);
+}
+
+.delete-no {
+  padding: 4px 12px;
+  background: rgba(255, 255, 255, 0.08);
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  border-radius: 4px;
+  color: #aaa;
+  cursor: pointer;
+  font-size: 12px;
+}
+
+.delete-no:hover {
+  background: rgba(255, 255, 255, 0.15);
 }
 
 /* Tools */

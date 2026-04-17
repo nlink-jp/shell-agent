@@ -6,7 +6,7 @@ import 'highlight.js/styles/github-dark.css';
 import './App.css';
 import {
   SendMessage, GetTools, GetLLMStatus, ListSessions,
-  NewSession, LoadSession, ApproveMITL, RejectMITL,
+  NewSession, LoadSession, DeleteSession, ApproveMITL, RejectMITL,
   GetPinnedMemories,
 } from '../wailsjs/go/main/App';
 import { EventsOn } from '../wailsjs/runtime/runtime';
@@ -189,6 +189,24 @@ function App() {
     refreshStatus();
   }
 
+  const [deleteConfirm, setDeleteConfirm] = useState<string | null>(null);
+
+  function handleDeleteSession(id: string) {
+    setDeleteConfirm(id);
+  }
+
+  async function confirmDelete() {
+    if (!deleteConfirm) return;
+    try {
+      await DeleteSession(deleteConfirm);
+      ListSessions().then((s) => setSessions(s || []));
+    } catch (err) {
+      console.error('Failed to delete session:', err);
+    } finally {
+      setDeleteConfirm(null);
+    }
+  }
+
   async function handleLoadSession(id: string) {
     try {
       const msgs = await LoadSession(id);
@@ -235,11 +253,23 @@ function App() {
           {sidebarTab === 'sessions' && (
             <div className="session-list">
               {sessions.map(s => (
-                <div key={s.id} className="session-item" onClick={() => handleLoadSession(s.id)}>
-                  <span className="session-title">{s.title}</span>
-                  <span className="session-date">{s.updated_at}</span>
+                <div key={s.id} className="session-item">
+                  <div className="session-info" onClick={() => handleLoadSession(s.id)}>
+                    <span className="session-title">{s.title}</span>
+                    <span className="session-date">{s.updated_at}</span>
+                  </div>
+                  <button className="session-delete" onClick={(e) => { e.stopPropagation(); handleDeleteSession(s.id); }} title="Delete">&#x2715;</button>
                 </div>
               ))}
+              {deleteConfirm && (
+                <div className="delete-confirm">
+                  <span>Delete this session?</span>
+                  <div className="delete-confirm-actions">
+                    <button className="delete-yes" onClick={confirmDelete}>Delete</button>
+                    <button className="delete-no" onClick={() => setDeleteConfirm(null)}>Cancel</button>
+                  </div>
+                </div>
+              )}
               {sessions.length === 0 && <p className="empty">No sessions yet</p>}
             </div>
           )}

@@ -6,6 +6,10 @@ export function ApproveMITL() {
   return window['go']['main']['App']['ApproveMITL']();
 }
 
+export function DeleteSession(arg1) {
+  return window['go']['main']['App']['DeleteSession'](arg1);
+}
+
 export function GetConfig() {
   return window['go']['main']['App']['GetConfig']();
 }

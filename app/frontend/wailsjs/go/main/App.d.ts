@@ -6,6 +6,8 @@ import {memory} from '../models';
 
 export function ApproveMITL():Promise<void>;
 
+export function DeleteSession(arg1:string):Promise<void>;
+
 export function GetConfig():Promise<config.Config>;
 
 export function GetLLMStatus():Promise<main.LLMStatus>;

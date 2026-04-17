@@ -165,6 +165,14 @@ func (a *App) LoadSession(id string) ([]ChatMessage, error) {
 	return msgs, nil
 }
 
+// DeleteSession deletes a session by ID.
+func (a *App) DeleteSession(id string) error {
+	if a.session != nil && a.session.ID == id {
+		a.NewSession()
+	}
+	return a.store.Delete(id)
+}
+
 // ListSessions returns all sessions for the sidebar.
 func (a *App) ListSessions() ([]SessionInfo, error) {
 	sessions, err := a.store.List()
@@ -229,6 +237,9 @@ func (a *App) SendMessage(content string) (ChatMessage, error) {
 				Tier:      memory.TierHot,
 			})
 			a.session.UpdatedAt = respTime
+
+			// Generate session title from first message
+			a.generateTitleIfNeeded()
 
 			// Check if hot memory exceeds token limit and summarize if needed
 			a.compactMemoryIfNeeded()
@@ -413,6 +424,42 @@ func (a *App) SaveConfig(cfgJSON string) error {
 	a.tools = toolcall.NewRegistry(cfg.Tools.ScriptDir)
 	_ = a.tools.Scan()
 	return cfg.Save()
+}
+
+// generateTitleIfNeeded generates a session title from the first exchange.
+func (a *App) generateTitleIfNeeded() {
+	if a.session.Title != "New Chat" {
+		return
+	}
+
+	// Need at least one user message
+	var firstUser string
+	for _, r := range a.session.Records {
+		if r.Role == "user" && r.Tier == memory.TierHot {
+			firstUser = r.Content
+			break
+		}
+	}
+	if firstUser == "" {
+		return
+	}
+
+	prompt := []client.Message{
+		client.TextMessage("system", "Generate a very short title (under 30 chars) for a chat that starts with the following message. Reply with ONLY the title, no quotes, no explanation. Use the same language as the message."),
+		client.TextMessage("user", firstUser),
+	}
+
+	resp, err := a.llm.Chat(prompt, nil)
+	if err != nil {
+		return
+	}
+	if len(resp.Choices) > 0 {
+		title := strings.TrimSpace(resp.Choices[0].Message.Content)
+		if title != "" && len(title) < 60 {
+			a.session.Title = title
+			wailsRuntime.EventsEmit(a.ctx, "chat:title_updated", title)
+		}
+	}
 }
 
 // compactMemoryIfNeeded summarizes old hot records into warm when token limit is exceeded.

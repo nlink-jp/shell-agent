@@ -220,6 +220,10 @@ func (a *App) SendMessage(content string) (ChatMessage, error) {
 				Tier:      memory.TierHot,
 			})
 			a.session.UpdatedAt = respTime
+
+			// Check if hot memory exceeds token limit and summarize if needed
+			a.compactMemoryIfNeeded()
+
 			a.autoSave()
 
 			// Emit the full response as tokens for the frontend
@@ -389,6 +393,47 @@ func (a *App) SaveConfig(cfgJSON string) error {
 	a.tools = toolcall.NewRegistry(cfg.Tools.ScriptDir)
 	_ = a.tools.Scan()
 	return cfg.Save()
+}
+
+// compactMemoryIfNeeded summarizes old hot records into warm when token limit is exceeded.
+func (a *App) compactMemoryIfNeeded() {
+	hotTokens := a.session.HotTokenCount()
+	limit := a.cfg.Memory.HotTokenLimit
+	if hotTokens <= limit {
+		return
+	}
+
+	excess := hotTokens - (limit * 3 / 4) // compact to 75% of limit
+	toSummarize := a.session.PromoteOldestHotToWarm(excess)
+	if len(toSummarize) == 0 {
+		return
+	}
+
+	// Build summarization prompt
+	var content string
+	for _, r := range toSummarize {
+		content += fmt.Sprintf("[%s %s] %s\n", r.Timestamp.Format("15:04:05"), r.Role, r.Content)
+	}
+
+	summaryPrompt := []client.Message{
+		client.TextMessage("system", "Summarize the following conversation concisely, preserving key facts, decisions, and time references. Write in the same language as the conversation."),
+		client.TextMessage("user", content),
+	}
+
+	resp, err := a.llm.Chat(summaryPrompt, nil)
+	if err != nil {
+		fmt.Printf("memory summarization error: %v\n", err)
+		return
+	}
+
+	if len(resp.Choices) > 0 {
+		summary := resp.Choices[0].Message.Content
+		a.session.ApplySummary(toSummarize, summary)
+		wailsRuntime.EventsEmit(a.ctx, "chat:memory_compacted", map[string]any{
+			"summarized_count": len(toSummarize),
+			"hot_tokens":       a.session.HotTokenCount(),
+		})
+	}
 }
 
 func (a *App) autoSave() {

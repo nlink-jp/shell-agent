@@ -1,11 +1,16 @@
 package memory
 
 import (
+	"encoding/base64"
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"time"
 )
+
+var base64StdDecode = base64.StdEncoding.DecodeString
+var base64StdEncode = base64.StdEncoding.EncodeToString
 
 // Tier represents the memory tier of a record.
 type Tier string
@@ -32,10 +37,99 @@ type TimeRange struct {
 	To   time.Time `json:"to"`
 }
 
-// ImageEntry holds a base64-encoded image for multimodal messages.
+// ImageEntry holds a reference to an image stored on disk.
 type ImageEntry struct {
+	ID       string `json:"id"`
 	MimeType string `json:"mime_type"`
-	Data     string `json:"data"`
+}
+
+// ImageStore manages image files on disk.
+type ImageStore struct {
+	dir string
+}
+
+// NewImageStore creates an ImageStore.
+func NewImageStore(dir string) (*ImageStore, error) {
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return nil, err
+	}
+	return &ImageStore{dir: dir}, nil
+}
+
+// Save writes image data to disk and returns the ID.
+func (s *ImageStore) Save(dataURL string) (string, string, error) {
+	// Parse data URL: data:image/png;base64,xxxx
+	mimeType := "image/png"
+	base64Data := dataURL
+
+	if idx := indexOf(dataURL, ","); idx >= 0 {
+		header := dataURL[:idx]
+		base64Data = dataURL[idx+1:]
+		// Extract mime type from "data:image/png;base64"
+		if start := indexOf(header, ":"); start >= 0 {
+			if end := indexOf(header, ";"); end > start {
+				mimeType = header[start+1 : end]
+			}
+		}
+	}
+
+	id := fmt.Sprintf("%d", time.Now().UnixNano())
+
+	ext := ".png"
+	switch mimeType {
+	case "image/jpeg":
+		ext = ".jpg"
+	case "image/gif":
+		ext = ".gif"
+	case "image/webp":
+		ext = ".webp"
+	}
+
+	data, err := base64Decode(base64Data)
+	if err != nil {
+		return "", "", fmt.Errorf("decode image: %w", err)
+	}
+
+	path := filepath.Join(s.dir, id+ext)
+	if err := os.WriteFile(path, data, 0o644); err != nil {
+		return "", "", err
+	}
+
+	return id + ext, mimeType, nil
+}
+
+// LoadAsDataURL reads an image and returns it as a data URL.
+func (s *ImageStore) LoadAsDataURL(id, mimeType string) (string, error) {
+	path := filepath.Join(s.dir, id)
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return "", err
+	}
+	encoded := base64Encode(data)
+	return fmt.Sprintf("data:%s;base64,%s", mimeType, encoded), nil
+}
+
+// Path returns the filesystem path for an image.
+func (s *ImageStore) Path(id string) string {
+	return filepath.Join(s.dir, id)
+}
+
+func indexOf(s, substr string) int {
+	for i := 0; i <= len(s)-len(substr); i++ {
+		if s[i:i+len(substr)] == substr {
+			return i
+		}
+	}
+	return -1
+}
+
+func base64Decode(s string) ([]byte, error) {
+	// Use encoding/base64 from stdlib
+	return base64StdDecode(s)
+}
+
+func base64Encode(data []byte) string {
+	return base64StdEncode(data)
 }
 
 // Session represents a conversation session.

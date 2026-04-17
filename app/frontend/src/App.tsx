@@ -5,7 +5,7 @@ import rehypeHighlight from 'rehype-highlight';
 import 'highlight.js/styles/github-dark.css';
 import './App.css';
 import {
-  SendMessage, GetTools, GetLLMStatus, ListSessions,
+  SendMessage, SendMessageWithImages, GetTools, GetLLMStatus, ListSessions,
   NewSession, LoadSession, DeleteSession, RenameSession,
   ApproveMITL, RejectMITL, GetPinnedMemories,
 } from '../wailsjs/go/main/App';
@@ -15,6 +15,7 @@ interface Message {
   role: string;
   content: string;
   timestamp: string;
+  images?: string[];
 }
 
 interface ToolInfo {
@@ -68,9 +69,11 @@ function App() {
   const [sidebarTab, setSidebarTab] = useState<'sessions' | 'tools' | 'status'>('sessions');
   const [mitlRequest, setMitlRequest] = useState<ToolCallRequest | null>(null);
   const [pinnedMemories, setPinnedMemories] = useState<PinnedMemory[]>([]);
+  const [pendingImages, setPendingImages] = useState<string[]>([]);
   const composingRef = useRef(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     GetTools().then(setTools);
@@ -130,21 +133,78 @@ function App() {
     GetLLMStatus().then(setLLMStatus);
   }
 
+  function fileToDataURL(file: File): Promise<string> {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(reader.result as string);
+      reader.onerror = reject;
+      reader.readAsDataURL(file);
+    });
+  }
+
+  async function addImages(files: FileList | File[]) {
+    const newImages: string[] = [];
+    for (const file of Array.from(files)) {
+      if (file.type.startsWith('image/')) {
+        const dataURL = await fileToDataURL(file);
+        newImages.push(dataURL);
+      }
+    }
+    if (newImages.length > 0) {
+      setPendingImages(prev => [...prev, ...newImages]);
+    }
+  }
+
+  function handlePaste(e: React.ClipboardEvent) {
+    const items = e.clipboardData.items;
+    const imageFiles: File[] = [];
+    for (const item of Array.from(items)) {
+      if (item.type.startsWith('image/')) {
+        const file = item.getAsFile();
+        if (file) imageFiles.push(file);
+      }
+    }
+    if (imageFiles.length > 0) {
+      e.preventDefault();
+      addImages(imageFiles);
+    }
+  }
+
+  function handleDrop(e: React.DragEvent) {
+    e.preventDefault();
+    if (e.dataTransfer.files.length > 0) {
+      addImages(e.dataTransfer.files);
+    }
+  }
+
+  function handleDragOver(e: React.DragEvent) {
+    e.preventDefault();
+  }
+
+  function removeImage(index: number) {
+    setPendingImages(prev => prev.filter((_, i) => i !== index));
+  }
+
   async function handleSend() {
     const text = input.trim();
-    if (!text || streaming) return;
+    if ((!text && pendingImages.length === 0) || streaming) return;
 
     const now = new Date();
     const timestamp = now.toLocaleTimeString('ja-JP', { hour12: false });
 
-    const userMsg: Message = { role: 'user', content: text, timestamp };
+    const images = [...pendingImages];
+    // Keep data URLs for immediate display in chat
+    const userMsg: Message = { role: 'user', content: text || '(image)', timestamp, images: images.length > 0 ? images : undefined };
     setMessages(prev => [...prev, userMsg]);
     setInput('');
+    setPendingImages([]);
     setStreaming(true);
     setStreamContent('');
 
     try {
-      const resp = await SendMessage(text);
+      const resp = images.length > 0
+        ? await SendMessageWithImages(text, images)
+        : await SendMessage(text);
       setMessages(prev => [...prev, {
         role: resp.role,
         content: resp.content,
@@ -377,6 +437,13 @@ function App() {
                 <span className="message-role">{msg.role}</span>
                 <span className="message-time">{msg.timestamp}</span>
               </div>
+              {msg.images && msg.images.length > 0 && (
+                <div className="message-images">
+                  {msg.images.map((img, j) => (
+                    <img key={j} src={img} alt="" className="message-image" />
+                  ))}
+                </div>
+              )}
               <div className="message-content markdown-body">
                 <ReactMarkdown remarkPlugins={[remarkGfm]} rehypePlugins={[rehypeHighlight]}>
                   {msg.content}
@@ -437,21 +504,45 @@ function App() {
           <div ref={messagesEndRef} />
         </div>
 
-        <div className="input-area">
-          <textarea
-            ref={inputRef}
-            value={input}
-            onChange={e => setInput(e.target.value)}
-            onKeyDown={handleKeyDown}
-            onCompositionStart={handleCompositionStart}
-            onCompositionEnd={handleCompositionEnd}
-            placeholder="Type a message... (Shift+Enter to send, Enter for newline)"
-            disabled={streaming}
-            rows={3}
-          />
-          <button onClick={handleSend} disabled={streaming || !input.trim()}>
-            {streaming ? '...' : 'Send'}
-          </button>
+        <div className="input-area" onDrop={handleDrop} onDragOver={handleDragOver}>
+          {pendingImages.length > 0 && (
+            <div className="pending-images">
+              {pendingImages.map((img, i) => (
+                <div key={i} className="pending-image">
+                  <img src={img} alt="" />
+                  <button className="pending-image-remove" onClick={() => removeImage(i)}>&#x2715;</button>
+                </div>
+              ))}
+            </div>
+          )}
+          <div className="input-row">
+            <button className="attach-btn" onClick={() => fileInputRef.current?.click()} disabled={streaming} title="Attach image">
+              &#x1F4CE;
+            </button>
+            <input
+              ref={fileInputRef}
+              type="file"
+              accept="image/*"
+              multiple
+              style={{ display: 'none' }}
+              onChange={e => { if (e.target.files) addImages(e.target.files); e.target.value = ''; }}
+            />
+            <textarea
+              ref={inputRef}
+              value={input}
+              onChange={e => setInput(e.target.value)}
+              onKeyDown={handleKeyDown}
+              onPaste={handlePaste}
+              onCompositionStart={handleCompositionStart}
+              onCompositionEnd={handleCompositionEnd}
+              placeholder="Type a message... (Shift+Enter to send, Enter for newline)"
+              disabled={streaming}
+              rows={3}
+            />
+            <button onClick={handleSend} disabled={streaming || (!input.trim() && pendingImages.length === 0)}>
+              {streaming ? '...' : 'Send'}
+            </button>
+          </div>
         </div>
       </div>
     </div>

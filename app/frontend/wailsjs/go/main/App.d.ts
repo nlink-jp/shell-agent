@@ -10,6 +10,8 @@ export function DeleteSession(arg1:string):Promise<void>;
 
 export function GetConfig():Promise<config.Config>;
 
+export function GetImageDataURL(arg1:string,arg2:string):Promise<string>;
+
 export function GetLLMStatus():Promise<main.LLMStatus>;
 
 export function GetPinnedMemories():Promise<Array<memory.PinnedMemory>>;
@@ -31,3 +33,5 @@ export function RenameSession(arg1:string,arg2:string):Promise<void>;
 export function SaveConfig(arg1:string):Promise<void>;
 
 export function SendMessage(arg1:string):Promise<main.ChatMessage>;
+
+export function SendMessageWithImages(arg1:string,arg2:Array<string>):Promise<main.ChatMessage>;

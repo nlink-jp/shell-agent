@@ -1,4 +1,8 @@
 import { useState, useEffect, useRef } from 'react';
+import ReactMarkdown from 'react-markdown';
+import remarkGfm from 'remark-gfm';
+import rehypeHighlight from 'rehype-highlight';
+import 'highlight.js/styles/github-dark.css';
 import './App.css';
 import { SendMessage, GetTools, GetLLMStatus, ListSessions, NewSession, LoadSession } from '../wailsjs/go/main/App';
 import { EventsOn } from '../wailsjs/runtime/runtime';
@@ -39,6 +43,7 @@ function App() {
   const [sessions, setSessions] = useState<SessionInfo[]>([]);
   const [llmStatus, setLLMStatus] = useState<LLMStatus | null>(null);
   const [sidebarTab, setSidebarTab] = useState<'sessions' | 'tools' | 'status'>('sessions');
+  const [composing, setComposing] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
 
@@ -108,7 +113,7 @@ function App() {
   }
 
   function handleKeyDown(e: React.KeyboardEvent) {
-    if (e.key === 'Enter' && !e.shiftKey) {
+    if (e.key === 'Enter' && e.shiftKey && !composing) {
       e.preventDefault();
       handleSend();
     }
@@ -208,6 +213,7 @@ function App() {
       </div>
 
       <div className="main">
+        <div className="drag-handle" />
         <div className="messages">
           {messages.map((msg, i) => (
             <div key={i} className={`message ${msg.role}`}>
@@ -215,15 +221,34 @@ function App() {
                 <span className="message-role">{msg.role}</span>
                 <span className="message-time">{msg.timestamp}</span>
               </div>
-              <div className="message-content">{msg.content}</div>
+              <div className="message-content markdown-body">
+                <ReactMarkdown remarkPlugins={[remarkGfm]} rehypePlugins={[rehypeHighlight]}>
+                  {msg.content}
+                </ReactMarkdown>
+              </div>
             </div>
           ))}
+          {streaming && !streamContent && (
+            <div className="message assistant thinking">
+              <div className="message-header">
+                <span className="message-role">assistant</span>
+              </div>
+              <div className="message-content">
+                <span className="spinner" />
+                <span className="thinking-text">Thinking...</span>
+              </div>
+            </div>
+          )}
           {streaming && streamContent && (
             <div className="message assistant streaming">
               <div className="message-header">
                 <span className="message-role">assistant</span>
               </div>
-              <div className="message-content">{streamContent}</div>
+              <div className="message-content markdown-body">
+                <ReactMarkdown remarkPlugins={[remarkGfm]} rehypePlugins={[rehypeHighlight]}>
+                  {streamContent}
+                </ReactMarkdown>
+              </div>
             </div>
           )}
           <div ref={messagesEndRef} />
@@ -235,7 +260,9 @@ function App() {
             value={input}
             onChange={e => setInput(e.target.value)}
             onKeyDown={handleKeyDown}
-            placeholder="Type a message... (Enter to send, Shift+Enter for newline)"
+            onCompositionStart={() => setComposing(true)}
+            onCompositionEnd={() => setComposing(false)}
+            placeholder="Type a message... (Shift+Enter to send, Enter for newline)"
             disabled={streaming}
             rows={3}
           />

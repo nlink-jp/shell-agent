@@ -70,6 +70,7 @@ function App() {
   const [mitlRequest, setMitlRequest] = useState<ToolCallRequest | null>(null);
   const [pinnedMemories, setPinnedMemories] = useState<PinnedMemory[]>([]);
   const [pendingImages, setPendingImages] = useState<string[]>([]);
+  const [lightboxImage, setLightboxImage] = useState<string | null>(null);
   const composingRef = useRef(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
@@ -313,6 +314,12 @@ function App() {
 
   return (
     <div className="app">
+      {lightboxImage && (
+        <div className="lightbox" onClick={() => setLightboxImage(null)}>
+          <img src={lightboxImage} alt="" onClick={e => e.stopPropagation()} />
+          <button className="lightbox-close" onClick={() => setLightboxImage(null)}>&#x2715;</button>
+        </div>
+      )}
       <div className="sidebar">
         <div className="sidebar-header">
           <h2>Shell Agent</h2>
@@ -440,7 +447,7 @@ function App() {
               {msg.images && msg.images.length > 0 && (
                 <div className="message-images">
                   {msg.images.map((img, j) => (
-                    <img key={j} src={img} alt="" className="message-image" />
+                    <img key={j} src={img} alt="" className="message-image" onClick={() => setLightboxImage(img)} />
                   ))}
                 </div>
               )}
@@ -509,7 +516,7 @@ function App() {
             <div className="pending-images">
               {pendingImages.map((img, i) => (
                 <div key={i} className="pending-image">
-                  <img src={img} alt="" />
+                  <img src={img} alt="" onClick={() => setLightboxImage(img)} />
                   <button className="pending-image-remove" onClick={() => removeImage(i)}>&#x2715;</button>
                 </div>
               ))}

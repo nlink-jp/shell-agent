@@ -126,6 +126,7 @@ export namespace main {
 	    role: string;
 	    content: string;
 	    timestamp: string;
+	    images?: string[];
 	
 	    static createFrom(source: any = {}) {
 	        return new ChatMessage(source);
@@ -136,6 +137,7 @@ export namespace main {
 	        this.role = source["role"];
 	        this.content = source["content"];
 	        this.timestamp = source["timestamp"];
+	        this.images = source["images"];
 	    }
 	}
 	export class LLMStatus {

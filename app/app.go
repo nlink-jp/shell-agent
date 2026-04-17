@@ -20,9 +20,10 @@ import (
 
 // ChatMessage is exposed to the frontend.
 type ChatMessage struct {
-	Role      string `json:"role"`
-	Content   string `json:"content"`
-	Timestamp string `json:"timestamp"`
+	Role      string   `json:"role"`
+	Content   string   `json:"content"`
+	Timestamp string   `json:"timestamp"`
+	Images    []string `json:"images,omitempty"`
 }
 
 // ToolInfo is exposed to the frontend.
@@ -169,11 +170,20 @@ func (a *App) LoadSession(id string) ([]ChatMessage, error) {
 
 	var msgs []ChatMessage
 	for _, r := range sess.Records {
-		msgs = append(msgs, ChatMessage{
+		msg := ChatMessage{
 			Role:      r.Role,
 			Content:   r.Content,
 			Timestamp: r.Timestamp.Format("15:04:05"),
-		})
+		}
+		// Load images from disk for display
+		if len(r.Images) > 0 && a.images != nil {
+			for _, img := range r.Images {
+				if du, err := a.images.LoadAsDataURL(img.ID, img.MimeType); err == nil {
+					msg.Images = append(msg.Images, du)
+				}
+			}
+		}
+		msgs = append(msgs, msg)
 	}
 	return msgs, nil
 }

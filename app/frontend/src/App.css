@@ -234,6 +234,11 @@
   color: #e0a060;
 }
 
+.tool-category.mcp {
+  background: rgba(120, 80, 200, 0.2);
+  color: #b090e0;
+}
+
 .tool-desc {
   font-size: 12px;
   color: #888;

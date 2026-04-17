@@ -13,6 +13,7 @@ import (
 	"github.com/nlink-jp/nlk/strip"
 	"github.com/nlink-jp/shell-agent/internal/client"
 	"github.com/nlink-jp/shell-agent/internal/config"
+	"github.com/nlink-jp/shell-agent/internal/mcp"
 	"github.com/nlink-jp/shell-agent/internal/memory"
 	"github.com/nlink-jp/shell-agent/internal/toolcall"
 	wailsRuntime "github.com/wailsapp/wails/v2/pkg/runtime"
@@ -61,14 +62,15 @@ type ToolCallRequest struct {
 
 // App is the main application struct exposed to the frontend via Wails bindings.
 type App struct {
-	ctx     context.Context
-	cfg     *config.Config
-	llm     *client.Client
-	store   *memory.Store
-	images  *memory.ImageStore
-	pinned  *memory.PinnedStore
-	tools   *toolcall.Registry
-	session *memory.Session
+	ctx      context.Context
+	cfg      *config.Config
+	llm      *client.Client
+	store    *memory.Store
+	images   *memory.ImageStore
+	pinned   *memory.PinnedStore
+	tools    *toolcall.Registry
+	guardian *mcp.Guardian
+	session  *memory.Session
 
 	// Security: nonce tag for prompt injection defense (rotated per turn)
 	guardTag guard.Tag
@@ -129,11 +131,30 @@ func (a *App) startup(ctx context.Context) {
 	a.tools = toolcall.NewRegistry(cfg.Tools.ScriptDir)
 	_ = a.tools.Scan()
 
+	// Start mcp-guardian if configured
+	if cfg.Guardian.BinaryPath != "" {
+		args := []string{}
+		if cfg.Guardian.ConfigPath != "" {
+			args = append(args, "--profile", cfg.Guardian.ConfigPath)
+		}
+		g := mcp.NewGuardian(cfg.Guardian.BinaryPath, args...)
+		if err := g.Start(); err != nil {
+			fmt.Printf("mcp-guardian start: %v (MCP tools unavailable)\n", err)
+		} else {
+			a.guardian = g
+			fmt.Printf("mcp-guardian started: %d tools available\n", len(g.Tools()))
+		}
+	}
+
 	a.NewSession()
 }
 
 // shutdown is called when the app is closing.
 func (a *App) shutdown(_ context.Context) {
+	if a.guardian != nil {
+		_ = a.guardian.Stop()
+	}
+
 	if a.session != nil && a.store != nil {
 		_ = a.store.Save(a.session)
 	}
@@ -391,6 +412,16 @@ func (a *App) handleToolCall(tc client.ToolCall) (string, error) {
 		return result, nil
 	}
 
+	// Check MCP tools (prefixed with "mcp__")
+	if strings.HasPrefix(tc.Function.Name, "mcp__") && a.guardian != nil {
+		mcpName := strings.TrimPrefix(tc.Function.Name, "mcp__")
+		result, err := a.guardian.CallTool(mcpName, json.RawMessage(args))
+		if err != nil {
+			return "", err
+		}
+		return string(result), nil
+	}
+
 	tool, ok := a.tools.Get(tc.Function.Name)
 	if !ok {
 		return "", fmt.Errorf("unknown tool: %s", tc.Function.Name)
@@ -432,9 +463,20 @@ func (a *App) RejectMITL() {
 	}
 }
 
-// GetTools returns all registered tools.
+// GetTools returns all registered tools (shell scripts + MCP).
 func (a *App) GetTools() []ToolInfo {
 	var infos []ToolInfo
+	// MCP tools
+	if a.guardian != nil {
+		for _, t := range a.guardian.Tools() {
+			infos = append(infos, ToolInfo{
+				Name:        "mcp__" + t.Name,
+				Description: t.Description,
+				Category:    "mcp",
+			})
+		}
+	}
+	// Shell script tools
 	for _, t := range a.tools.List() {
 		infos = append(infos, ToolInfo{
 			Name:        t.Name,
@@ -908,6 +950,20 @@ func (a *App) buildToolDefs() []client.Tool {
 	var tools []client.Tool
 	// Add builtin image tools
 	tools = append(tools, a.builtinTools()...)
+	// Add MCP tools from guardian
+	if a.guardian != nil {
+		for _, t := range a.guardian.Tools() {
+			tools = append(tools, client.Tool{
+				Type: "function",
+				Function: client.ToolFunction{
+					Name:        "mcp__" + t.Name,
+					Description: t.Description,
+					Parameters:  t.InputSchema,
+				},
+			})
+		}
+	}
+	// Add shell script tools
 	for _, t := range a.tools.List() {
 		props := make(map[string]any)
 		var required []string

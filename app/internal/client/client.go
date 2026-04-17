@@ -37,9 +37,41 @@ type Message struct {
 	Content interface{} `json:"content"`
 }
 
+// ContentPart represents a part of a multimodal message.
+type ContentPart struct {
+	Type     string    `json:"type"`
+	Text     string    `json:"text,omitempty"`
+	ImageURL *ImageURL `json:"image_url,omitempty"`
+}
+
+// ImageURL holds a base64 data URL for an image.
+type ImageURL struct {
+	URL string `json:"url"`
+}
+
 // TextMessage creates a simple text message.
 func TextMessage(role, content string) Message {
 	return Message{Role: role, Content: content}
+}
+
+// ImageMessage creates a message with text and images.
+// Each image is preceded by a label to help VLMs distinguish multiple images.
+func ImageMessage(role, text string, images []string, labels []string) Message {
+	var parts []ContentPart
+	for i, dataURL := range images {
+		label := fmt.Sprintf("[Image %d]", i+1)
+		if i < len(labels) && labels[i] != "" {
+			label = labels[i]
+		}
+		parts = append(parts,
+			ContentPart{Type: "text", Text: label},
+			ContentPart{Type: "image_url", ImageURL: &ImageURL{URL: dataURL}},
+		)
+	}
+	if text != "" {
+		parts = append(parts, ContentPart{Type: "text", Text: text})
+	}
+	return Message{Role: role, Content: parts}
 }
 
 // ChatRequest is the request payload for /chat/completions.

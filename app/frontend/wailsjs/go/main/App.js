@@ -14,6 +14,10 @@ export function GetConfig() {
   return window['go']['main']['App']['GetConfig']();
 }
 
+export function GetImageDataURL(arg1, arg2) {
+  return window['go']['main']['App']['GetImageDataURL'](arg1, arg2);
+}
+
 export function GetLLMStatus() {
   return window['go']['main']['App']['GetLLMStatus']();
 }
@@ -56,4 +60,8 @@ export function SaveConfig(arg1) {
 
 export function SendMessage(arg1) {
   return window['go']['main']['App']['SendMessage'](arg1);
+}
+
+export function SendMessageWithImages(arg1, arg2) {
+  return window['go']['main']['App']['SendMessageWithImages'](arg1, arg2);
 }

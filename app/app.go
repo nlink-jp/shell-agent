@@ -2,7 +2,9 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
+	"sync"
 	"time"
 
 	"github.com/nlink-jp/shell-agent/internal/client"
@@ -35,27 +37,46 @@ type SessionInfo struct {
 
 // LLMStatus is exposed to the frontend for the monitoring panel.
 type LLMStatus struct {
-	CurrentTime  string `json:"current_time"`
-	HotMessages  int    `json:"hot_messages"`
-	WarmSummaries int   `json:"warm_summaries"`
-	ColdSummaries int   `json:"cold_summaries"`
-	TokensUsed   int    `json:"tokens_used"`
-	TokenLimit   int    `json:"token_limit"`
+	CurrentTime   string `json:"current_time"`
+	HotMessages   int    `json:"hot_messages"`
+	WarmSummaries int    `json:"warm_summaries"`
+	ColdSummaries int    `json:"cold_summaries"`
+	TokensUsed    int    `json:"tokens_used"`
+	TokenLimit    int    `json:"token_limit"`
+}
+
+// ToolCallRequest is sent to the frontend for MITL approval.
+type ToolCallRequest struct {
+	ID        string `json:"id"`
+	Name      string `json:"name"`
+	Arguments string `json:"arguments"`
+	Category  string `json:"category"`
+	NeedsMITL bool   `json:"needs_mitl"`
 }
 
 // App is the main application struct exposed to the frontend via Wails bindings.
 type App struct {
-	ctx      context.Context
-	cfg      *config.Config
-	llm      *client.Client
-	store    *memory.Store
-	tools    *toolcall.Registry
-	session  *memory.Session
+	ctx     context.Context
+	cfg     *config.Config
+	llm     *client.Client
+	store   *memory.Store
+	tools   *toolcall.Registry
+	session *memory.Session
+
+	// MITL approval channel
+	mitlCh   chan mitlResponse
+	mitlOnce sync.Once
+}
+
+type mitlResponse struct {
+	approved bool
 }
 
 // NewApp creates a new App instance.
 func NewApp() *App {
-	return &App{}
+	return &App{
+		mitlCh: make(chan mitlResponse, 1),
+	}
 }
 
 // startup is called when the app starts.
@@ -69,7 +90,6 @@ func (a *App) startup(ctx context.Context) {
 	}
 	a.cfg = cfg
 
-	// Restore window position and size
 	if cfg.Window.Width > 0 && cfg.Window.Height > 0 {
 		wailsRuntime.WindowSetSize(ctx, cfg.Window.Width, cfg.Window.Height)
 		wailsRuntime.WindowSetPosition(ctx, cfg.Window.X, cfg.Window.Y)
@@ -95,7 +115,6 @@ func (a *App) shutdown(_ context.Context) {
 		_ = a.store.Save(a.session)
 	}
 
-	// Save window position and size
 	if a.ctx != nil && a.cfg != nil {
 		w, h := wailsRuntime.WindowGetSize(a.ctx)
 		x, y := wailsRuntime.WindowGetPosition(a.ctx)
@@ -154,11 +173,10 @@ func (a *App) ListSessions() ([]SessionInfo, error) {
 	return infos, nil
 }
 
-// SendMessage sends a user message and streams the LLM response.
+// SendMessage sends a user message and runs the agent loop.
 func (a *App) SendMessage(content string) (ChatMessage, error) {
 	now := time.Now()
 
-	// Add user message to hot memory
 	a.session.Records = append(a.session.Records, memory.Record{
 		Timestamp: now,
 		Role:      "user",
@@ -166,51 +184,147 @@ func (a *App) SendMessage(content string) (ChatMessage, error) {
 		Tier:      memory.TierHot,
 	})
 
-	// Build messages with time context
 	systemPrompt := "You are a helpful assistant. You have access to tools that can execute shell scripts. Respond concisely."
-	messages := a.buildMessages(systemPrompt)
+	toolDefs := a.buildToolDefs()
 
-	// Build tool definitions
-	tools := a.buildToolDefs()
+	const maxIterations = 10
+	toolsExecuted := false
+	for i := 0; i < maxIterations; i++ {
+		messages := a.buildMessages(systemPrompt)
 
-	// Stream response
-	var fullResponse string
-	err := a.llm.ChatStream(messages, tools, func(token string, toolCalls []client.ToolCall, done bool) {
-		if token != "" {
-			fullResponse += token
-			wailsRuntime.EventsEmit(a.ctx, "chat:token", token)
+		// After tool execution, omit tool defs to force a text response
+		var currentTools []client.Tool
+		if !toolsExecuted {
+			currentTools = toolDefs
 		}
-		if len(toolCalls) > 0 {
-			wailsRuntime.EventsEmit(a.ctx, "chat:toolcall", toolCalls)
+
+		resp, err := a.llm.Chat(messages, currentTools)
+		if err != nil {
+			return ChatMessage{}, err
 		}
-		if done {
+
+		if len(resp.Choices) == 0 {
+			return ChatMessage{}, fmt.Errorf("empty response from LLM")
+		}
+
+		choice := resp.Choices[0]
+		assistantMsg := choice.Message
+
+		// If no tool calls, this is a final text response
+		if len(assistantMsg.ToolCalls) == 0 {
+			respTime := time.Now()
+			a.session.Records = append(a.session.Records, memory.Record{
+				Timestamp: respTime,
+				Role:      "assistant",
+				Content:   assistantMsg.Content,
+				Tier:      memory.TierHot,
+			})
+			a.session.UpdatedAt = respTime
+			a.autoSave()
+
+			// Emit the full response as tokens for the frontend
+			wailsRuntime.EventsEmit(a.ctx, "chat:token", assistantMsg.Content)
 			wailsRuntime.EventsEmit(a.ctx, "chat:done", nil)
+
+			return ChatMessage{
+				Role:      "assistant",
+				Content:   assistantMsg.Content,
+				Timestamp: respTime.Format("15:04:05"),
+			}, nil
 		}
-	})
-	if err != nil {
-		return ChatMessage{}, err
-	}
 
-	// Add assistant response to hot memory
-	respTime := time.Now()
-	a.session.Records = append(a.session.Records, memory.Record{
-		Timestamp: respTime,
-		Role:      "assistant",
-		Content:   fullResponse,
-		Tier:      memory.TierHot,
-	})
-	a.session.UpdatedAt = respTime
+		// LLM requested tool calls — add assistant message to history
+		a.session.Records = append(a.session.Records, memory.Record{
+			Timestamp: time.Now(),
+			Role:      "assistant",
+			Content:   assistantMsg.Content,
+			Tier:      memory.TierHot,
+		})
 
-	// Auto-save
-	if a.store != nil {
-		_ = a.store.Save(a.session)
+		// Process each tool call
+		for _, tc := range assistantMsg.ToolCalls {
+			result, err := a.handleToolCall(tc)
+			if err != nil {
+				result = fmt.Sprintf("Error: %v", err)
+			}
+
+			wailsRuntime.EventsEmit(a.ctx, "chat:toolresult", map[string]string{
+				"name":   tc.Function.Name,
+				"result": result,
+			})
+
+			// Add tool result to memory as system message so LLM can see it
+			a.session.Records = append(a.session.Records, memory.Record{
+				Timestamp: time.Now(),
+				Role:      "user",
+				Content:   fmt.Sprintf("[Tool executed: %s]\nOutput:\n%s", tc.Function.Name, result),
+				Tier:      memory.TierHot,
+			})
+		}
+
+		// Add instruction to respond based on tool results
+		a.session.Records = append(a.session.Records, memory.Record{
+			Timestamp: time.Now(),
+			Role:      "system",
+			Content:   "The tool has been executed and the result is shown above. Now respond to the user based on the tool output. Do NOT call any more tools. Provide your answer in natural language.",
+			Tier:      memory.TierHot,
+		})
+
+		a.autoSave()
+		toolsExecuted = true
+
+		// Notify frontend that we're going back to the LLM
+		wailsRuntime.EventsEmit(a.ctx, "chat:thinking", nil)
 	}
 
 	return ChatMessage{
 		Role:      "assistant",
-		Content:   fullResponse,
-		Timestamp: respTime.Format("15:04:05"),
+		Content:   "Maximum tool call iterations reached.",
+		Timestamp: time.Now().Format("15:04:05"),
 	}, nil
+}
+
+// handleToolCall executes a single tool call, requesting MITL approval if needed.
+func (a *App) handleToolCall(tc client.ToolCall) (string, error) {
+	tool, ok := a.tools.Get(tc.Function.Name)
+	if !ok {
+		return "", fmt.Errorf("unknown tool: %s", tc.Function.Name)
+	}
+
+	req := ToolCallRequest{
+		ID:        tc.ID,
+		Name:      tc.Function.Name,
+		Arguments: tc.Function.Arguments,
+		Category:  string(tool.Category),
+		NeedsMITL: tool.Category.NeedsMITL(),
+	}
+
+	wailsRuntime.EventsEmit(a.ctx, "chat:toolcall_request", req)
+
+	if req.NeedsMITL {
+		resp := <-a.mitlCh
+		if !resp.approved {
+			return fmt.Sprintf("Tool call '%s' was rejected by the user.", tc.Function.Name), nil
+		}
+	}
+
+	return a.tools.Execute(tc.Function.Name, tc.Function.Arguments)
+}
+
+// ApproveMITL is called from the frontend when user approves a tool call.
+func (a *App) ApproveMITL() {
+	select {
+	case a.mitlCh <- mitlResponse{approved: true}:
+	default:
+	}
+}
+
+// RejectMITL is called from the frontend when user rejects a tool call.
+func (a *App) RejectMITL() {
+	select {
+	case a.mitlCh <- mitlResponse{approved: false}:
+	default:
+	}
 }
 
 // GetTools returns all registered tools.
@@ -224,6 +338,14 @@ func (a *App) GetTools() []ToolInfo {
 		})
 	}
 	return infos
+}
+
+// RefreshTools rescans the tool script directory.
+func (a *App) RefreshTools() ([]ToolInfo, error) {
+	if err := a.tools.Scan(); err != nil {
+		return nil, err
+	}
+	return a.GetTools(), nil
 }
 
 // GetLLMStatus returns the current LLM state for monitoring.
@@ -250,14 +372,29 @@ func (a *App) GetLLMStatus() LLMStatus {
 	}
 }
 
-// ApproveTool is called when the user approves a MITL tool call.
-func (a *App) ApproveTool(toolName, argsJSON string) (string, error) {
-	return a.tools.Execute(toolName, argsJSON)
+// GetConfig returns the current config for the settings UI.
+func (a *App) GetConfig() *config.Config {
+	return a.cfg
 }
 
-// RejectTool is called when the user rejects a MITL tool call.
-func (a *App) RejectTool(toolName string) string {
-	return fmt.Sprintf("Tool call '%s' was rejected by the user.", toolName)
+// SaveConfig saves updated config from the settings UI.
+func (a *App) SaveConfig(cfgJSON string) error {
+	var cfg config.Config
+	if err := json.Unmarshal([]byte(cfgJSON), &cfg); err != nil {
+		return err
+	}
+	cfg.Window = a.cfg.Window
+	a.cfg = &cfg
+	a.llm = client.New(cfg.API.Endpoint, cfg.API.Model, cfg.API.APIKey)
+	a.tools = toolcall.NewRegistry(cfg.Tools.ScriptDir)
+	_ = a.tools.Scan()
+	return cfg.Save()
+}
+
+func (a *App) autoSave() {
+	if a.store != nil && a.session != nil {
+		_ = a.store.Save(a.session)
+	}
 }
 
 func (a *App) buildMessages(systemPrompt string) []client.Message {

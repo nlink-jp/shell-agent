@@ -1,3 +1,125 @@
+export namespace config {
+	
+	export class APIConfig {
+	    endpoint: string;
+	    model: string;
+	    api_key?: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new APIConfig(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.endpoint = source["endpoint"];
+	        this.model = source["model"];
+	        this.api_key = source["api_key"];
+	    }
+	}
+	export class WindowConfig {
+	    x: number;
+	    y: number;
+	    width: number;
+	    height: number;
+	
+	    static createFrom(source: any = {}) {
+	        return new WindowConfig(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.x = source["x"];
+	        this.y = source["y"];
+	        this.width = source["width"];
+	        this.height = source["height"];
+	    }
+	}
+	export class GuardianConfig {
+	    binary_path: string;
+	    config_path: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new GuardianConfig(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.binary_path = source["binary_path"];
+	        this.config_path = source["config_path"];
+	    }
+	}
+	export class ToolsConfig {
+	    script_dir: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new ToolsConfig(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.script_dir = source["script_dir"];
+	    }
+	}
+	export class MemoryConfig {
+	    hot_token_limit: number;
+	    warm_retention_mins: number;
+	    cold_retention_mins: number;
+	
+	    static createFrom(source: any = {}) {
+	        return new MemoryConfig(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.hot_token_limit = source["hot_token_limit"];
+	        this.warm_retention_mins = source["warm_retention_mins"];
+	        this.cold_retention_mins = source["cold_retention_mins"];
+	    }
+	}
+	export class Config {
+	    api: APIConfig;
+	    memory: MemoryConfig;
+	    tools: ToolsConfig;
+	    guardian: GuardianConfig;
+	    window: WindowConfig;
+	
+	    static createFrom(source: any = {}) {
+	        return new Config(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.api = this.convertValues(source["api"], APIConfig);
+	        this.memory = this.convertValues(source["memory"], MemoryConfig);
+	        this.tools = this.convertValues(source["tools"], ToolsConfig);
+	        this.guardian = this.convertValues(source["guardian"], GuardianConfig);
+	        this.window = this.convertValues(source["window"], WindowConfig);
+	    }
+	
+		convertValues(a: any, classs: any, asMap: boolean = false): any {
+		    if (!a) {
+		        return a;
+		    }
+		    if (a.slice && a.map) {
+		        return (a as any[]).map(elem => this.convertValues(elem, classs));
+		    } else if ("object" === typeof a) {
+		        if (asMap) {
+		            for (const key of Object.keys(a)) {
+		                a[key] = new classs(a[key]);
+		            }
+		            return a;
+		        }
+		        return new classs(a);
+		    }
+		    return a;
+		}
+	}
+	
+	
+	
+
+}
+
 export namespace main {
 	
 	export class ChatMessage {

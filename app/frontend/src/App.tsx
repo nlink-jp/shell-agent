@@ -4,7 +4,10 @@ import remarkGfm from 'remark-gfm';
 import rehypeHighlight from 'rehype-highlight';
 import 'highlight.js/styles/github-dark.css';
 import './App.css';
-import { SendMessage, GetTools, GetLLMStatus, ListSessions, NewSession, LoadSession } from '../wailsjs/go/main/App';
+import {
+  SendMessage, GetTools, GetLLMStatus, ListSessions,
+  NewSession, LoadSession, ApproveMITL, RejectMITL,
+} from '../wailsjs/go/main/App';
 import { EventsOn } from '../wailsjs/runtime/runtime';
 
 interface Message {
@@ -34,6 +37,19 @@ interface LLMStatus {
   token_limit: number;
 }
 
+interface ToolCallRequest {
+  id: string;
+  name: string;
+  arguments: string;
+  category: string;
+  needs_mitl: boolean;
+}
+
+interface ToolResult {
+  name: string;
+  result: string;
+}
+
 function App() {
   const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState('');
@@ -44,6 +60,7 @@ function App() {
   const [llmStatus, setLLMStatus] = useState<LLMStatus | null>(null);
   const [sidebarTab, setSidebarTab] = useState<'sessions' | 'tools' | 'status'>('sessions');
   const [composing, setComposing] = useState(false);
+  const [mitlRequest, setMitlRequest] = useState<ToolCallRequest | null>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
 
@@ -62,16 +79,38 @@ function App() {
       setStreaming(false);
     });
 
+    const offToolRequest = EventsOn('chat:toolcall_request', (req: ToolCallRequest) => {
+      if (req.needs_mitl) {
+        setMitlRequest(req);
+      }
+    });
+
+    const offToolResult = EventsOn('chat:toolresult', (res: ToolResult) => {
+      const now = new Date().toLocaleTimeString('ja-JP', { hour12: false });
+      setMessages(prev => [...prev, {
+        role: 'tool',
+        content: `**${res.name}**\n\n${res.result}`,
+        timestamp: now,
+      }]);
+    });
+
+    const offThinking = EventsOn('chat:thinking', () => {
+      setStreamContent('');
+    });
+
     return () => {
       clearInterval(statusInterval);
       offToken();
       offDone();
+      offToolRequest();
+      offToolResult();
+      offThinking();
     };
   }, []);
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
-  }, [messages, streamContent]);
+  }, [messages, streamContent, mitlRequest]);
 
   function refreshStatus() {
     GetLLMStatus().then(setLLMStatus);
@@ -119,6 +158,16 @@ function App() {
     }
   }
 
+  function handleMITLApprove() {
+    setMitlRequest(null);
+    ApproveMITL();
+  }
+
+  function handleMITLReject() {
+    setMitlRequest(null);
+    RejectMITL();
+  }
+
   async function handleNewSession() {
     await NewSession();
     setMessages([]);
@@ -133,6 +182,15 @@ function App() {
       refreshStatus();
     } catch (err) {
       console.error('Failed to load session:', err);
+    }
+  }
+
+  function formatArgs(argsStr: string): string {
+    try {
+      const obj = JSON.parse(argsStr);
+      return JSON.stringify(obj, null, 2);
+    } catch {
+      return argsStr;
     }
   }
 
@@ -228,7 +286,8 @@ function App() {
               </div>
             </div>
           ))}
-          {streaming && !streamContent && (
+
+          {streaming && !streamContent && !mitlRequest && (
             <div className="message assistant thinking">
               <div className="message-header">
                 <span className="message-role">assistant</span>
@@ -239,6 +298,7 @@ function App() {
               </div>
             </div>
           )}
+
           {streaming && streamContent && (
             <div className="message assistant streaming">
               <div className="message-header">
@@ -251,6 +311,31 @@ function App() {
               </div>
             </div>
           )}
+
+          {mitlRequest && (
+            <div className="mitl-dialog">
+              <div className="mitl-header">
+                <span className="mitl-icon">&#9888;</span>
+                <span>Tool Approval Required</span>
+              </div>
+              <div className="mitl-body">
+                <div className="mitl-tool-name">
+                  <span className="mitl-label">Tool:</span>
+                  <code>{mitlRequest.name}</code>
+                  <span className={`tool-category ${mitlRequest.category}`}>{mitlRequest.category}</span>
+                </div>
+                <div className="mitl-args">
+                  <span className="mitl-label">Arguments:</span>
+                  <pre>{formatArgs(mitlRequest.arguments)}</pre>
+                </div>
+              </div>
+              <div className="mitl-actions">
+                <button className="mitl-approve" onClick={handleMITLApprove}>Approve</button>
+                <button className="mitl-reject" onClick={handleMITLReject}>Reject</button>
+              </div>
+            </div>
+          )}
+
           <div ref={messagesEndRef} />
         </div>
 

@@ -239,6 +239,21 @@
   border: 1px solid rgba(255, 255, 255, 0.08);
 }
 
+.message.tool {
+  margin-right: auto;
+  max-width: 90%;
+}
+
+.message.tool .message-role {
+  color: #80c080;
+}
+
+.message.tool .message-content {
+  background: rgba(40, 80, 40, 0.2);
+  border: 1px solid rgba(80, 180, 80, 0.2);
+  font-size: 13px;
+}
+
 .message.error .message-content {
   background: rgba(200, 60, 60, 0.2);
   border: 1px solid rgba(200, 60, 60, 0.3);
@@ -364,6 +379,101 @@
   border: none;
   border-top: 1px solid rgba(255, 255, 255, 0.15);
   margin: 12px 0;
+}
+
+/* MITL Approval Dialog */
+.mitl-dialog {
+  margin: 16px 0;
+  background: rgba(50, 40, 20, 0.8);
+  border: 1px solid rgba(220, 160, 40, 0.5);
+  border-radius: 10px;
+  padding: 16px;
+}
+
+.mitl-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 14px;
+  font-weight: 600;
+  color: #e0b040;
+  margin-bottom: 12px;
+}
+
+.mitl-icon {
+  font-size: 18px;
+}
+
+.mitl-body {
+  margin-bottom: 14px;
+}
+
+.mitl-tool-name {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+
+.mitl-label {
+  font-size: 12px;
+  color: #888;
+  min-width: 70px;
+}
+
+.mitl-tool-name code {
+  font-family: 'SF Mono', 'Menlo', monospace;
+  font-size: 13px;
+  background: rgba(255, 255, 255, 0.1);
+  padding: 2px 6px;
+  border-radius: 3px;
+}
+
+.mitl-args pre {
+  background: rgba(0, 0, 0, 0.3);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 6px;
+  padding: 10px;
+  margin: 6px 0 0 0;
+  font-family: 'SF Mono', 'Menlo', monospace;
+  font-size: 12px;
+  overflow-x: auto;
+  color: #ccc;
+}
+
+.mitl-actions {
+  display: flex;
+  gap: 10px;
+}
+
+.mitl-approve {
+  padding: 8px 20px;
+  background: rgba(60, 140, 60, 0.4);
+  border: 1px solid rgba(60, 140, 60, 0.6);
+  border-radius: 6px;
+  color: #90d090;
+  cursor: pointer;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.mitl-approve:hover {
+  background: rgba(60, 140, 60, 0.6);
+}
+
+.mitl-reject {
+  padding: 8px 20px;
+  background: rgba(160, 50, 50, 0.3);
+  border: 1px solid rgba(160, 50, 50, 0.5);
+  border-radius: 6px;
+  color: #e08080;
+  cursor: pointer;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.mitl-reject:hover {
+  background: rgba(160, 50, 50, 0.5);
 }
 
 /* Input area */

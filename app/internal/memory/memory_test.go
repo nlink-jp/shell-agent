@@ -1,6 +1,7 @@
 package memory
 
 import (
+	"path/filepath"
 	"testing"
 	"time"
 )
@@ -173,6 +174,83 @@ func TestPromoteAndApplySummary(t *testing.T) {
 	if hotCount >= 6 {
 		t.Errorf("expected fewer hot records after compaction, got %d", hotCount)
 	}
+}
+
+func TestPinnedStore(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "pinned.json")
+	ps, err := NewPinnedStore(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	now := time.Now()
+	added := ps.Add(PinnedMemory{
+		Fact:       "User prefers Go over Python",
+		Category:   "preference",
+		SourceTime: now,
+		CreatedAt:  now,
+	})
+	if !added {
+		t.Error("expected first add to succeed")
+	}
+
+	// Duplicate should be rejected
+	added = ps.Add(PinnedMemory{
+		Fact:       "User prefers Go over Python",
+		Category:   "preference",
+		SourceTime: now,
+		CreatedAt:  now,
+	})
+	if added {
+		t.Error("duplicate should be rejected")
+	}
+
+	if err := ps.Save(); err != nil {
+		t.Fatal(err)
+	}
+
+	// Reload
+	ps2, err := NewPinnedStore(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(ps2.Entries) != 1 {
+		t.Errorf("expected 1 entry, got %d", len(ps2.Entries))
+	}
+	if ps2.Entries[0].Fact != "User prefers Go over Python" {
+		t.Errorf("unexpected fact: %s", ps2.Entries[0].Fact)
+	}
+}
+
+func TestPinnedFormatForPrompt(t *testing.T) {
+	ps := &PinnedStore{}
+	if ps.FormatForPrompt() != "" {
+		t.Error("empty store should return empty string")
+	}
+
+	ps.Add(PinnedMemory{Fact: "Likes coffee", Category: "preference"})
+	ps.Add(PinnedMemory{Fact: "Uses macOS", Category: "fact"})
+
+	prompt := ps.FormatForPrompt()
+	if prompt == "" {
+		t.Error("expected non-empty prompt")
+	}
+	if !contains(prompt, "Likes coffee") || !contains(prompt, "Uses macOS") {
+		t.Errorf("prompt missing facts: %s", prompt)
+	}
+}
+
+func contains(s, substr string) bool {
+	return len(s) >= len(substr) && (s == substr || len(s) > 0 && containsStr(s, substr))
+}
+
+func containsStr(s, sub string) bool {
+	for i := 0; i <= len(s)-len(sub); i++ {
+		if s[i:i+len(sub)] == sub {
+			return true
+		}
+	}
+	return false
 }
 
 func TestWarmRecord(t *testing.T) {

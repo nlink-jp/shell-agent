@@ -381,6 +381,58 @@
   margin: 12px 0;
 }
 
+/* Pinned memories */
+.pinned-list {
+  margin-top: 12px;
+  padding-top: 8px;
+  border-top: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.pinned-header {
+  font-size: 12px;
+  font-weight: 600;
+  color: #888;
+  display: block;
+  margin-bottom: 8px;
+}
+
+.pinned-item {
+  display: flex;
+  gap: 8px;
+  align-items: flex-start;
+  padding: 4px 0;
+  font-size: 12px;
+}
+
+.pinned-category {
+  font-size: 10px;
+  padding: 1px 5px;
+  border-radius: 3px;
+  flex-shrink: 0;
+  background: rgba(120, 80, 200, 0.2);
+  color: #b090e0;
+}
+
+.pinned-category.preference {
+  background: rgba(80, 160, 200, 0.2);
+  color: #80c0e0;
+}
+
+.pinned-category.decision {
+  background: rgba(200, 160, 40, 0.2);
+  color: #e0c060;
+}
+
+.pinned-category.fact {
+  background: rgba(80, 180, 80, 0.2);
+  color: #80c080;
+}
+
+.pinned-fact {
+  color: #bbb;
+  line-height: 1.3;
+}
+
 /* MITL Approval Dialog */
 .mitl-dialog {
   margin: 16px 0;

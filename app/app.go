@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strings"
 	"sync"
 	"time"
 
@@ -60,6 +61,7 @@ type App struct {
 	cfg     *config.Config
 	llm     *client.Client
 	store   *memory.Store
+	pinned  *memory.PinnedStore
 	tools   *toolcall.Registry
 	session *memory.Session
 
@@ -102,6 +104,13 @@ func (a *App) startup(ctx context.Context) {
 		fmt.Printf("store init error: %v\n", err)
 	}
 	a.store = store
+
+	pinned, err := memory.NewPinnedStore(config.ConfigDir() + "/pinned.json")
+	if err != nil {
+		fmt.Printf("pinned store error: %v\n", err)
+		pinned = &memory.PinnedStore{}
+	}
+	a.pinned = pinned
 
 	a.tools = toolcall.NewRegistry(cfg.Tools.ScriptDir)
 	_ = a.tools.Scan()
@@ -223,6 +232,9 @@ func (a *App) SendMessage(content string) (ChatMessage, error) {
 
 			// Check if hot memory exceeds token limit and summarize if needed
 			a.compactMemoryIfNeeded()
+
+			// Extract important facts from the latest exchange
+			a.extractPinnedMemories()
 
 			a.autoSave()
 
@@ -376,6 +388,14 @@ func (a *App) GetLLMStatus() LLMStatus {
 	}
 }
 
+// GetPinnedMemories returns all pinned memories.
+func (a *App) GetPinnedMemories() []memory.PinnedMemory {
+	if a.pinned == nil {
+		return nil
+	}
+	return a.pinned.Entries
+}
+
 // GetConfig returns the current config for the settings UI.
 func (a *App) GetConfig() *config.Config {
 	return a.cfg
@@ -436,6 +456,105 @@ func (a *App) compactMemoryIfNeeded() {
 	}
 }
 
+// extractPinnedMemories asks the LLM to identify important facts from recent messages.
+func (a *App) extractPinnedMemories() {
+	if a.pinned == nil {
+		return
+	}
+
+	// Get the last few hot messages for analysis
+	hot := a.session.HotRecords()
+	if len(hot) < 2 {
+		return
+	}
+
+	// Only analyze the latest exchange (last 4 messages max)
+	start := len(hot) - 4
+	if start < 0 {
+		start = 0
+	}
+	recent := hot[start:]
+
+	var conversation string
+	for _, r := range recent {
+		conversation += fmt.Sprintf("[%s] %s: %s\n", r.Timestamp.Format("15:04:05"), r.Role, r.Content)
+	}
+
+	existing := a.pinned.FormatForPrompt()
+	prompt := []client.Message{
+		client.TextMessage("system", `Analyze the conversation below and extract important facts worth remembering long-term.
+Categories: preference, decision, fact, context
+Rules:
+- Only extract genuinely important, reusable information
+- Skip greetings, small talk, and transient details
+- If nothing is important, respond with exactly: NONE
+- Otherwise respond with one fact per line in format: category|fact
+- Do not repeat facts already known
+`+"Already known:\n"+existing),
+		client.TextMessage("user", conversation),
+	}
+
+	resp, err := a.llm.Chat(prompt, nil)
+	if err != nil {
+		return
+	}
+
+	if len(resp.Choices) == 0 {
+		return
+	}
+
+	text := resp.Choices[0].Message.Content
+	if text == "NONE" || text == "" {
+		return
+	}
+
+	now := time.Now()
+	changed := false
+	for _, line := range splitLines(text) {
+		parts := splitFirst(line, "|")
+		if len(parts) != 2 {
+			continue
+		}
+		category := parts[0]
+		fact := parts[1]
+		if fact == "" {
+			continue
+		}
+		if a.pinned.Add(memory.PinnedMemory{
+			Fact:       fact,
+			Category:   category,
+			SourceTime: now,
+			CreatedAt:  now,
+		}) {
+			changed = true
+		}
+	}
+
+	if changed {
+		_ = a.pinned.Save()
+		wailsRuntime.EventsEmit(a.ctx, "chat:pinned_updated", a.pinned.Entries)
+	}
+}
+
+func splitLines(s string) []string {
+	var lines []string
+	for _, line := range strings.Split(s, "\n") {
+		line = strings.TrimSpace(line)
+		if line != "" {
+			lines = append(lines, line)
+		}
+	}
+	return lines
+}
+
+func splitFirst(s, sep string) []string {
+	i := strings.Index(s, sep)
+	if i < 0 {
+		return []string{s}
+	}
+	return []string{strings.TrimSpace(s[:i]), strings.TrimSpace(s[i+len(sep):])}
+}
+
 func (a *App) autoSave() {
 	if a.store != nil && a.session != nil {
 		_ = a.store.Save(a.session)
@@ -449,7 +568,13 @@ func (a *App) buildMessages(systemPrompt string) []client.Message {
 		now.Format("2006-01-02 15:04:05"),
 		now.Location().String(),
 	)
-	fullSystem := fmt.Sprintf("%s\n\n%s", systemPrompt, timeContext)
+	pinnedContext := ""
+	if a.pinned != nil {
+		if p := a.pinned.FormatForPrompt(); p != "" {
+			pinnedContext = "\n\nImportant facts you remember about the user:\n" + p
+		}
+	}
+	fullSystem := fmt.Sprintf("%s\n\n%s%s", systemPrompt, timeContext, pinnedContext)
 
 	messages := []client.Message{
 		client.TextMessage("system", fullSystem),

@@ -14,6 +14,10 @@ export function GetLLMStatus() {
   return window['go']['main']['App']['GetLLMStatus']();
 }
 
+export function GetPinnedMemories() {
+  return window['go']['main']['App']['GetPinnedMemories']();
+}
+
 export function GetTools() {
   return window['go']['main']['App']['GetTools']();
 }

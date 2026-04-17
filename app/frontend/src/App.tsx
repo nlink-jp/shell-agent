@@ -7,6 +7,7 @@ import './App.css';
 import {
   SendMessage, GetTools, GetLLMStatus, ListSessions,
   NewSession, LoadSession, ApproveMITL, RejectMITL,
+  GetPinnedMemories,
 } from '../wailsjs/go/main/App';
 import { EventsOn } from '../wailsjs/runtime/runtime';
 
@@ -50,6 +51,12 @@ interface ToolResult {
   result: string;
 }
 
+interface PinnedMemory {
+  fact: string;
+  category: string;
+  source_time: string;
+}
+
 function App() {
   const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState('');
@@ -61,12 +68,14 @@ function App() {
   const [sidebarTab, setSidebarTab] = useState<'sessions' | 'tools' | 'status'>('sessions');
   const [composing, setComposing] = useState(false);
   const [mitlRequest, setMitlRequest] = useState<ToolCallRequest | null>(null);
+  const [pinnedMemories, setPinnedMemories] = useState<PinnedMemory[]>([]);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
 
   useEffect(() => {
     GetTools().then(setTools);
     ListSessions().then((s) => setSessions(s || []));
+    GetPinnedMemories().then((p) => setPinnedMemories(p || []));
     refreshStatus();
 
     const statusInterval = setInterval(refreshStatus, 5000);
@@ -98,6 +107,10 @@ function App() {
       setStreamContent('');
     });
 
+    const offPinned = EventsOn('chat:pinned_updated', (entries: PinnedMemory[]) => {
+      setPinnedMemories(entries || []);
+    });
+
     return () => {
       clearInterval(statusInterval);
       offToken();
@@ -105,6 +118,7 @@ function App() {
       offToolRequest();
       offToolResult();
       offThinking();
+      offPinned();
     };
   }, []);
 
@@ -265,6 +279,21 @@ function App() {
                 <label>Token Limit</label>
                 <span>{llmStatus.token_limit}</span>
               </div>
+              <div className="status-item">
+                <label>Pinned</label>
+                <span>{pinnedMemories.length} facts</span>
+              </div>
+              {pinnedMemories.length > 0 && (
+                <div className="pinned-list">
+                  <label className="pinned-header">Remembered Facts</label>
+                  {pinnedMemories.map((p, i) => (
+                    <div key={i} className="pinned-item">
+                      <span className={`pinned-category ${p.category}`}>{p.category}</span>
+                      <span className="pinned-fact">{p.fact}</span>
+                    </div>
+                  ))}
+                </div>
+              )}
             </div>
           )}
         </div>

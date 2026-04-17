@@ -165,6 +165,68 @@ func (s *Session) ApplySummary(summarized []Record, summaryText string) {
 	s.Records = newRecords
 }
 
+// PinnedMemory represents an important fact extracted by the LLM.
+type PinnedMemory struct {
+	Fact       string    `json:"fact"`
+	Category   string    `json:"category"` // preference, decision, fact, context
+	SourceTime time.Time `json:"source_time"`
+	CreatedAt  time.Time `json:"created_at"`
+}
+
+// PinnedStore manages cross-session persistent memories.
+type PinnedStore struct {
+	path    string
+	Entries []PinnedMemory `json:"entries"`
+}
+
+// NewPinnedStore creates or loads a PinnedStore.
+func NewPinnedStore(path string) (*PinnedStore, error) {
+	ps := &PinnedStore{path: path}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return ps, nil
+		}
+		return nil, err
+	}
+	if err := json.Unmarshal(data, &ps.Entries); err != nil {
+		return nil, err
+	}
+	return ps, nil
+}
+
+// Save persists pinned memories to disk.
+func (ps *PinnedStore) Save() error {
+	data, err := json.MarshalIndent(ps.Entries, "", "  ")
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(ps.path, data, 0o644)
+}
+
+// Add appends a new pinned memory, deduplicating by fact content.
+func (ps *PinnedStore) Add(m PinnedMemory) bool {
+	for _, e := range ps.Entries {
+		if e.Fact == m.Fact {
+			return false
+		}
+	}
+	ps.Entries = append(ps.Entries, m)
+	return true
+}
+
+// FormatForPrompt returns pinned memories as a string for system prompt injection.
+func (ps *PinnedStore) FormatForPrompt() string {
+	if len(ps.Entries) == 0 {
+		return ""
+	}
+	var s string
+	for _, e := range ps.Entries {
+		s += "- [" + e.Category + "] " + e.Fact + "\n"
+	}
+	return s
+}
+
 // Store manages session persistence.
 type Store struct {
 	dir string

@@ -69,6 +69,12 @@ func (a *App) startup(ctx context.Context) {
 	}
 	a.cfg = cfg
 
+	// Restore window position and size
+	if cfg.Window.Width > 0 && cfg.Window.Height > 0 {
+		wailsRuntime.WindowSetSize(ctx, cfg.Window.Width, cfg.Window.Height)
+		wailsRuntime.WindowSetPosition(ctx, cfg.Window.X, cfg.Window.Y)
+	}
+
 	a.llm = client.New(cfg.API.Endpoint, cfg.API.Model, cfg.API.APIKey)
 
 	store, err := memory.NewStore(config.ConfigDir() + "/sessions")
@@ -87,6 +93,16 @@ func (a *App) startup(ctx context.Context) {
 func (a *App) shutdown(_ context.Context) {
 	if a.session != nil && a.store != nil {
 		_ = a.store.Save(a.session)
+	}
+
+	// Save window position and size
+	if a.ctx != nil && a.cfg != nil {
+		w, h := wailsRuntime.WindowGetSize(a.ctx)
+		x, y := wailsRuntime.WindowGetPosition(a.ctx)
+		a.cfg.Window = config.WindowConfig{
+			X: x, Y: y, Width: w, Height: h,
+		}
+		_ = a.cfg.Save()
 	}
 }
 

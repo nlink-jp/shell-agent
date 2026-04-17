@@ -17,6 +17,15 @@ type Config struct {
 	Memory   MemoryConfig   `json:"memory"`
 	Tools    ToolsConfig    `json:"tools"`
 	Guardian GuardianConfig `json:"guardian"`
+	Window   WindowConfig   `json:"window"`
+}
+
+// WindowConfig holds window position and size.
+type WindowConfig struct {
+	X      int `json:"x"`
+	Y      int `json:"y"`
+	Width  int `json:"width"`
+	Height int `json:"height"`
 }
 
 // APIConfig holds LLM API connection settings.

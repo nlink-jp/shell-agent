@@ -1,0 +1,199 @@
+package client
+
+import (
+	"bufio"
+	"bytes"
+	"encoding/json"
+	"fmt"
+	"io"
+	"net/http"
+	"strings"
+	"time"
+)
+
+// Client communicates with an OpenAI-compatible API.
+type Client struct {
+	endpoint   string
+	model      string
+	apiKey     string
+	httpClient *http.Client
+}
+
+// New creates a new Client.
+func New(endpoint, model, apiKey string) *Client {
+	return &Client{
+		endpoint: strings.TrimRight(endpoint, "/"),
+		model:    model,
+		apiKey:   apiKey,
+		httpClient: &http.Client{
+			Timeout: 5 * time.Minute,
+		},
+	}
+}
+
+// Message represents a chat message.
+type Message struct {
+	Role    string      `json:"role"`
+	Content interface{} `json:"content"`
+}
+
+// TextMessage creates a simple text message.
+func TextMessage(role, content string) Message {
+	return Message{Role: role, Content: content}
+}
+
+// ChatRequest is the request payload for /chat/completions.
+type ChatRequest struct {
+	Model       string    `json:"model"`
+	Messages    []Message `json:"messages"`
+	Stream      bool      `json:"stream"`
+	Temperature float64   `json:"temperature,omitempty"`
+	Tools       []Tool    `json:"tools,omitempty"`
+}
+
+// Tool represents a function tool definition.
+type Tool struct {
+	Type     string       `json:"type"`
+	Function ToolFunction `json:"function"`
+}
+
+// ToolFunction describes a callable function.
+type ToolFunction struct {
+	Name        string      `json:"name"`
+	Description string      `json:"description"`
+	Parameters  interface{} `json:"parameters"`
+}
+
+// ChatResponse is the response from /chat/completions (non-streaming).
+type ChatResponse struct {
+	Choices []Choice `json:"choices"`
+}
+
+// Choice represents one completion choice.
+type Choice struct {
+	Message      ResponseMessage `json:"message"`
+	Delta        ResponseMessage `json:"delta"`
+	FinishReason string          `json:"finish_reason"`
+}
+
+// ResponseMessage is the assistant's response message.
+type ResponseMessage struct {
+	Role      string     `json:"role"`
+	Content   string     `json:"content"`
+	ToolCalls []ToolCall `json:"tool_calls,omitempty"`
+}
+
+// ToolCall represents a function call request from the LLM.
+type ToolCall struct {
+	ID       string       `json:"id"`
+	Type     string       `json:"type"`
+	Function FunctionCall `json:"function"`
+}
+
+// FunctionCall holds the function name and arguments.
+type FunctionCall struct {
+	Name      string `json:"name"`
+	Arguments string `json:"arguments"`
+}
+
+// StreamCallback is called for each streamed token.
+type StreamCallback func(token string, toolCalls []ToolCall, done bool)
+
+// Chat sends a non-streaming chat request.
+func (c *Client) Chat(messages []Message, tools []Tool) (*ChatResponse, error) {
+	req := ChatRequest{
+		Model:    c.model,
+		Messages: messages,
+		Stream:   false,
+		Tools:    tools,
+	}
+
+	body, err := json.Marshal(req)
+	if err != nil {
+		return nil, fmt.Errorf("marshal request: %w", err)
+	}
+
+	resp, err := c.doRequest(body)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	var chatResp ChatResponse
+	if err := json.NewDecoder(resp.Body).Decode(&chatResp); err != nil {
+		return nil, fmt.Errorf("decode response: %w", err)
+	}
+	return &chatResp, nil
+}
+
+// ChatStream sends a streaming chat request, calling cb for each token.
+func (c *Client) ChatStream(messages []Message, tools []Tool, cb StreamCallback) error {
+	req := ChatRequest{
+		Model:    c.model,
+		Messages: messages,
+		Stream:   true,
+		Tools:    tools,
+	}
+
+	body, err := json.Marshal(req)
+	if err != nil {
+		return fmt.Errorf("marshal request: %w", err)
+	}
+
+	resp, err := c.doRequest(body)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+
+	scanner := bufio.NewScanner(resp.Body)
+	for scanner.Scan() {
+		line := scanner.Text()
+		if !strings.HasPrefix(line, "data: ") {
+			continue
+		}
+		data := strings.TrimPrefix(line, "data: ")
+		if data == "[DONE]" {
+			cb("", nil, true)
+			return nil
+		}
+
+		var chunk struct {
+			Choices []Choice `json:"choices"`
+		}
+		if err := json.Unmarshal([]byte(data), &chunk); err != nil {
+			continue
+		}
+		if len(chunk.Choices) > 0 {
+			delta := chunk.Choices[0].Delta
+			cb(delta.Content, delta.ToolCalls, chunk.Choices[0].FinishReason == "stop")
+		}
+	}
+	return scanner.Err()
+}
+
+func (c *Client) doRequest(body []byte) (*http.Response, error) {
+	url := c.endpoint + "/chat/completions"
+	req, err := http.NewRequest("POST", url, bytes.NewReader(body))
+	if err != nil {
+		return nil, fmt.Errorf("create request: %w", err)
+	}
+
+	req.Header.Set("Content-Type", "application/json")
+	if c.apiKey != "" {
+		req.Header.Set("Authorization", "Bearer "+c.apiKey)
+	}
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("send request: %w", err)
+	}
+
+	if resp.StatusCode != http.StatusOK {
+		respBody, _ := io.ReadAll(resp.Body)
+		resp.Body.Close()
+		return nil, fmt.Errorf("API error %d: %s", resp.StatusCode, string(respBody))
+	}
+
+	return resp, nil
+}

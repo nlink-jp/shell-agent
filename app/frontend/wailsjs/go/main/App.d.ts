@@ -26,6 +26,8 @@ export function RefreshTools():Promise<Array<main.ToolInfo>>;
 
 export function RejectMITL():Promise<void>;
 
+export function RenameSession(arg1:string,arg2:string):Promise<void>;
+
 export function SaveConfig(arg1:string):Promise<void>;
 
 export function SendMessage(arg1:string):Promise<main.ChatMessage>;

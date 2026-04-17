@@ -6,8 +6,8 @@ import 'highlight.js/styles/github-dark.css';
 import './App.css';
 import {
   SendMessage, GetTools, GetLLMStatus, ListSessions,
-  NewSession, LoadSession, DeleteSession, ApproveMITL, RejectMITL,
-  GetPinnedMemories,
+  NewSession, LoadSession, DeleteSession, RenameSession,
+  ApproveMITL, RejectMITL, GetPinnedMemories,
 } from '../wailsjs/go/main/App';
 import { EventsOn } from '../wailsjs/runtime/runtime';
 
@@ -66,9 +66,9 @@ function App() {
   const [sessions, setSessions] = useState<SessionInfo[]>([]);
   const [llmStatus, setLLMStatus] = useState<LLMStatus | null>(null);
   const [sidebarTab, setSidebarTab] = useState<'sessions' | 'tools' | 'status'>('sessions');
-  const [composing, setComposing] = useState(false);
   const [mitlRequest, setMitlRequest] = useState<ToolCallRequest | null>(null);
   const [pinnedMemories, setPinnedMemories] = useState<PinnedMemory[]>([]);
+  const composingRef = useRef(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
 
@@ -165,8 +165,11 @@ function App() {
     }
   }
 
+  function handleCompositionStart() { composingRef.current = true; }
+  function handleCompositionEnd() { setTimeout(() => { composingRef.current = false; }, 50); }
+
   function handleKeyDown(e: React.KeyboardEvent) {
-    if (e.key === 'Enter' && e.shiftKey && !composing) {
+    if (e.key === 'Enter' && e.shiftKey && !composingRef.current) {
       e.preventDefault();
       handleSend();
     }
@@ -190,6 +193,8 @@ function App() {
   }
 
   const [deleteConfirm, setDeleteConfirm] = useState<string | null>(null);
+  const [editingSession, setEditingSession] = useState<string | null>(null);
+  const [editTitle, setEditTitle] = useState('');
 
   function handleDeleteSession(id: string) {
     setDeleteConfirm(id);
@@ -204,6 +209,26 @@ function App() {
       console.error('Failed to delete session:', err);
     } finally {
       setDeleteConfirm(null);
+    }
+  }
+
+  function startRename(id: string, currentTitle: string) {
+    setEditingSession(id);
+    setEditTitle(currentTitle);
+  }
+
+  async function commitRename() {
+    if (!editingSession || !editTitle.trim()) {
+      setEditingSession(null);
+      return;
+    }
+    try {
+      await RenameSession(editingSession, editTitle.trim());
+      ListSessions().then((s) => setSessions(s || []));
+    } catch (err) {
+      console.error('Failed to rename session:', err);
+    } finally {
+      setEditingSession(null);
     }
   }
 
@@ -255,7 +280,21 @@ function App() {
               {sessions.map(s => (
                 <div key={s.id} className="session-item">
                   <div className="session-info" onClick={() => handleLoadSession(s.id)}>
-                    <span className="session-title">{s.title}</span>
+                    {editingSession === s.id ? (
+                      <input
+                        className="session-title-edit"
+                        value={editTitle}
+                        onChange={e => setEditTitle(e.target.value)}
+                        onBlur={commitRename}
+                        onCompositionStart={handleCompositionStart}
+                        onCompositionEnd={handleCompositionEnd}
+                        onKeyDown={e => { if (e.key === 'Enter' && !composingRef.current) commitRename(); if (e.key === 'Escape') setEditingSession(null); }}
+                        onClick={e => e.stopPropagation()}
+                        autoFocus
+                      />
+                    ) : (
+                      <span className="session-title" onDoubleClick={(e) => { e.stopPropagation(); startRename(s.id, s.title); }}>{s.title}</span>
+                    )}
                     <span className="session-date">{s.updated_at}</span>
                   </div>
                   <button className="session-delete" onClick={(e) => { e.stopPropagation(); handleDeleteSession(s.id); }} title="Delete">&#x2715;</button>
@@ -404,8 +443,8 @@ function App() {
             value={input}
             onChange={e => setInput(e.target.value)}
             onKeyDown={handleKeyDown}
-            onCompositionStart={() => setComposing(true)}
-            onCompositionEnd={() => setComposing(false)}
+            onCompositionStart={handleCompositionStart}
+            onCompositionEnd={handleCompositionEnd}
             placeholder="Type a message... (Shift+Enter to send, Enter for newline)"
             disabled={streaming}
             rows={3}

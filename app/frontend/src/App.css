@@ -113,6 +113,19 @@
   margin-left: 8px;
 }
 
+.session-title-edit {
+  flex: 1;
+  min-width: 0;
+  padding: 2px 6px;
+  background: rgba(255, 255, 255, 0.1);
+  border: 1px solid rgba(80, 120, 200, 0.5);
+  border-radius: 4px;
+  color: #e0e0e0;
+  font-size: 13px;
+  font-family: inherit;
+  outline: none;
+}
+
 .session-delete {
   flex-shrink: 0;
   width: 24px;

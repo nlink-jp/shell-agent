@@ -171,6 +171,20 @@ func (a *App) LoadSession(id string) ([]ChatMessage, error) {
 	return msgs, nil
 }
 
+// RenameSession updates the title of a session.
+func (a *App) RenameSession(id, title string) error {
+	if a.session != nil && a.session.ID == id {
+		a.session.Title = title
+		return a.store.Save(a.session)
+	}
+	sess, err := a.store.Load(id)
+	if err != nil {
+		return err
+	}
+	sess.Title = title
+	return a.store.Save(sess)
+}
+
 // DeleteSession deletes a session by ID.
 func (a *App) DeleteSession(id string) error {
 	if a.session != nil && a.session.ID == id {

@@ -189,9 +189,10 @@ func (a *App) shutdown(_ context.Context) {
 	if a.ctx != nil && a.cfg != nil {
 		w, h := wailsRuntime.WindowGetSize(a.ctx)
 		x, y := wailsRuntime.WindowGetPosition(a.ctx)
-		a.cfg.Window = config.WindowConfig{
-			X: x, Y: y, Width: w, Height: h,
-		}
+		a.cfg.Window.X = x
+		a.cfg.Window.Y = y
+		a.cfg.Window.Width = w
+		a.cfg.Window.Height = h
 		if a.session != nil {
 			a.cfg.LastSession = a.session.ID
 		}
@@ -760,6 +761,13 @@ func (a *App) GetBlobDataURL(blobRef string) string {
 	}
 	path := a.jobs.BlobPath(blobRef)
 	return a.fileToDataURL(path)
+}
+
+// SaveSidebarState saves sidebar width and collapsed state.
+func (a *App) SaveSidebarState(width int, collapsed bool) {
+	a.cfg.Window.SidebarWidth = width
+	a.cfg.Window.SidebarCollapsed = collapsed
+	_ = a.cfg.Save()
 }
 
 // GetConfig returns the current config for the settings UI.

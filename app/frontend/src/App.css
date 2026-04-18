@@ -8,12 +8,35 @@
 
 /* Sidebar */
 .sidebar {
-  width: 280px;
   background: var(--bg-sidebar);
   border-right: 1px solid var(--border-primary);
   display: flex;
   flex-direction: column;
   --wails-draggable: drag;
+  flex-shrink: 0;
+  min-width: 0;
+  overflow: hidden;
+}
+
+.sidebar-collapsed {
+  width: 42px;
+  flex-shrink: 0;
+  background: var(--bg-sidebar);
+  border-right: 1px solid var(--border-primary);
+  display: flex;
+  flex-direction: column;
+  --wails-draggable: drag;
+}
+
+.sidebar-resize {
+  width: 4px;
+  cursor: col-resize;
+  background: transparent;
+  flex-shrink: 0;
+}
+
+.sidebar-resize:hover {
+  background: var(--border-accent);
 }
 
 .sidebar-header {
@@ -28,23 +51,60 @@
   font-weight: 600;
 }
 
-.settings-btn {
+.sidebar-bottom {
+  margin-top: auto;
+  padding: 4px;
+  border-top: 1px solid var(--border-primary);
   --wails-draggable: no-drag;
-  width: 100%;
-  padding: 6px;
-  margin-top: 6px;
-  background: var(--bg-hover);
-  border: 1px solid var(--border-input);
-  border-radius: 6px;
-  color: var(--text-muted);
-  cursor: pointer;
-  font-size: 12px;
 }
 
-.settings-btn:hover {
-  background: var(--bg-hover);
-  color: var(--text-secondary);
+.sidebar-nav {
+  --wails-draggable: no-drag;
+  display: block;
+  width: 100%;
+  background: none;
+  border: none;
+  color: var(--text-dim);
+  cursor: pointer;
+  font-size: 13px;
+  height: 34px;
+  padding: 6px 8px;
+  border-radius: 4px;
+  text-align: left;
 }
+
+.sidebar-nav:hover {
+  color: var(--text-accent);
+  background: var(--bg-hover);
+}
+
+.sidebar-nav.active {
+  color: var(--text-accent);
+  background: var(--bg-hover);
+}
+
+.sidebar-nav-ic {
+  display: inline-block;
+  width: 22px;
+  font-size: 18px;
+  line-height: 13px;
+  vertical-align: 1px;
+  text-align: center;
+}
+
+.sidebar-nav-ic.ic-status,
+.sidebar-nav-ic.ic-settings {
+  vertical-align: -1px;
+}
+
+
+.sidebar-bottom-divider {
+  height: 1px;
+  background: var(--border-primary);
+  margin: 4px 0;
+}
+
+
 
 .new-chat-btn {
   --wails-draggable: no-drag;

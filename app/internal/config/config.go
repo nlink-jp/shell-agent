@@ -37,10 +37,12 @@ type LocationConfig struct {
 
 // WindowConfig holds window position and size.
 type WindowConfig struct {
-	X      int `json:"x"`
-	Y      int `json:"y"`
-	Width  int `json:"width"`
-	Height int `json:"height"`
+	X              int  `json:"x"`
+	Y              int  `json:"y"`
+	Width          int  `json:"width"`
+	Height         int  `json:"height"`
+	SidebarWidth   int  `json:"sidebar_width"`
+	SidebarCollapsed bool `json:"sidebar_collapsed"`
 }
 
 // APIConfig holds LLM API connection settings.

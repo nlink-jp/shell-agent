@@ -412,7 +412,19 @@ func (a *App) handleToolCall(tc client.ToolCall) (string, error) {
 
 	tool, ok := a.tools.Get(tc.Function.Name)
 	if !ok {
-		return "", fmt.Errorf("unknown tool: %s", tc.Function.Name)
+		// Fuzzy match: try matching by prefix or contained name
+		// Handles LLM generating names like "weather:get_current_weather" for "weather"
+		for _, t := range a.tools.List() {
+			if strings.Contains(tc.Function.Name, t.Name) || strings.Contains(t.Name, tc.Function.Name) {
+				tool = t
+				ok = true
+				tc.Function.Name = t.Name
+				break
+			}
+		}
+		if !ok {
+			return "", fmt.Errorf("unknown tool: %s", tc.Function.Name)
+		}
 	}
 
 	req := ToolCallRequest{

@@ -688,6 +688,64 @@
   border-radius: 3px;
 }
 
+/* Plan display */
+.plan-display {
+  margin: 8px 0;
+  padding: 10px 14px;
+  background: var(--bg-hover);
+  border: 1px solid var(--border-primary);
+  border-radius: 8px;
+  font-size: 12px;
+}
+
+.plan-header {
+  font-weight: 600;
+  color: var(--text-accent);
+  margin-bottom: 6px;
+  font-size: 13px;
+}
+
+.plan-steps {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.plan-step {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.plan-step-num {
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  background: var(--bg-btn-primary);
+  color: var(--text-accent);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 11px;
+  font-weight: 600;
+  flex-shrink: 0;
+}
+
+.plan-step-desc {
+  color: var(--text-secondary);
+  flex: 1;
+}
+
+.plan-step-tool {
+  font-family: 'SF Mono', 'Menlo', monospace;
+  font-size: 10px;
+  background: var(--bg-inline-code);
+  padding: 1px 5px;
+  border-radius: 3px;
+  color: var(--text-muted);
+  flex-shrink: 0;
+}
+
 .message.streaming .message-content {
   border-style: dashed;
 }

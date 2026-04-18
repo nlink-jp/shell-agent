@@ -84,6 +84,8 @@ function App() {
   const [sidebarTab, setSidebarTab] = useState<'sessions' | 'tools' | 'status'>('sessions');
   const [mitlRequest, setMitlRequest] = useState<ToolCallRequest | null>(null);
   const [executingTool, setExecutingTool] = useState<string | null>(null);
+  const [currentPhase, setCurrentPhase] = useState<string | null>(null);
+  const [currentPlan, setCurrentPlan] = useState<any>(null);
   const [pinnedMemories, setPinnedMemories] = useState<PinnedMemory[]>([]);
   const [showSettings, setShowSettings] = useState(false);
   const [settings, setSettings] = useState<any>(null);
@@ -175,6 +177,19 @@ function App() {
       setTools(t || []);
     });
 
+    const offPhase = EventsOn('chat:phase', (phase: string | null) => {
+      setCurrentPhase(phase);
+      if (!phase) setCurrentPlan(null);
+    });
+
+    const offPlan = EventsOn('chat:plan', (plan: any) => {
+      setCurrentPlan(plan);
+    });
+
+    const offInterim = EventsOn('chat:interim', (text: string) => {
+      // Interim summaries are shown briefly then fade
+    });
+
     const offTitleUpdated = EventsOn('chat:title_updated', () => {
       ListSessions().then((s) => setSessions(s || []));
     });
@@ -189,6 +204,9 @@ function App() {
       offPinned();
       offToolsUpdated();
       offTitleUpdated();
+      offPhase();
+      offPlan();
+      offInterim();
     };
   }, []);
 
@@ -872,7 +890,29 @@ function App() {
               </div>
               <div className="message-content">
                 <span className="spinner" />
-                <span className="thinking-text">Thinking...</span>
+                <span className="thinking-text">
+                  {currentPhase === 'plan' ? 'Planning...' :
+                   currentPhase === 'summarize' ? 'Summarizing...' :
+                   currentPhase?.startsWith('execute') ? currentPhase.replace('execute', 'Executing') + '...' :
+                   'Thinking...'}
+                </span>
+              </div>
+            </div>
+          )}
+
+          {currentPlan && streaming && (
+            <div className="plan-display">
+              <div className="plan-header">Plan: {currentPlan.goal}</div>
+              <div className="plan-steps">
+                {currentPlan.steps?.map((step: any, i: number) => (
+                  <div key={i} className="plan-step">
+                    <span className="plan-step-num">{step.step}</span>
+                    <span className="plan-step-desc">{step.description}</span>
+                    {step.tool && step.tool !== 'null' && (
+                      <code className="plan-step-tool">{step.tool}</code>
+                    )}
+                  </div>
+                ))}
               </div>
             </div>
           )}

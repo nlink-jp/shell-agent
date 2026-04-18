@@ -22,6 +22,17 @@ type Config struct {
 	Theme       string           `json:"theme"`
 	StartupMode string           `json:"startup_mode"` // "new" or "last"
 	LastSession string           `json:"last_session"`
+	Location    LocationConfig   `json:"location"`
+}
+
+// LocationConfig holds location settings.
+type LocationConfig struct {
+	Enabled  bool   `json:"enabled"`
+	Locality string `json:"locality"` // cached locality name
+	AdminArea string `json:"admin_area"`
+	Country  string `json:"country"`
+	Lat      float64 `json:"lat"`
+	Lon      float64 `json:"lon"`
 }
 
 // WindowConfig holds window position and size.

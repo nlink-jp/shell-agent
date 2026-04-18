@@ -82,7 +82,7 @@ function App() {
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
-  // Apply theme and restore last session on load
+  // Apply theme, restore last session, and fetch location on load
   useEffect(() => {
     GetConfig().then((cfg: any) => {
       if (cfg?.theme) {
@@ -93,6 +93,7 @@ function App() {
           if (msgs) setMessages(msgs);
         }).catch(() => {});
       }
+      // Location is fetched by Go backend via CoreLocation helper
     });
   }, []);
 

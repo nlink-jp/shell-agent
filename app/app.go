@@ -1272,7 +1272,7 @@ func (a *App) builtinTools() []client.Tool {
 			Type: "function",
 			Function: client.ToolFunction{
 				Name:        "create-report",
-				Description: "Create and display a Markdown report. Use this when the user asks to create, write, summarize, or compile a report or document. The report will be displayed in the chat and the user can save it to a file.",
+				Description: "Create and display a Markdown report with optional images. Use this when the user asks to create, write, summarize, or compile a report or document. The report will be displayed in the chat and the user can save it. To include images, first call list-images to get image IDs, then use ![description](image:ID) syntax in the content.",
 				Parameters: map[string]any{
 					"type": "object",
 					"properties": map[string]any{
@@ -1537,8 +1537,8 @@ func (a *App) resolveReportImages(content string) string {
 	return strings.Join(lines, "\n")
 }
 
-// SaveReport is called from the frontend to save a displayed report.
-func (a *App) SaveReport(content, suggestedFilename string) error {
+// SaveReport is called from the frontend to save a displayed report with images.
+func (a *App) SaveReport(content, suggestedFilename string, imageDataURLs []string) error {
 	path, err := wailsRuntime.SaveFileDialog(a.ctx, wailsRuntime.SaveDialogOptions{
 		Title:           "Save Report",
 		DefaultFilename: suggestedFilename,
@@ -1551,7 +1551,31 @@ func (a *App) SaveReport(content, suggestedFilename string) error {
 	if err != nil || path == "" {
 		return err
 	}
-	return os.WriteFile(path, []byte(content), 0o644)
+
+	// Save images alongside the markdown file
+	dir := filepath.Dir(path)
+	mdContent := content
+	for i, dataURL := range imageDataURLs {
+		if dataURL == "" {
+			continue
+		}
+		idx := strings.Index(dataURL, ",")
+		if idx < 0 {
+			continue
+		}
+		data, decErr := base64.StdEncoding.DecodeString(dataURL[idx+1:])
+		if decErr != nil {
+			continue
+		}
+		imgFilename := fmt.Sprintf("image_%d.png", i+1)
+		imgPath := filepath.Join(dir, imgFilename)
+		if writeErr := os.WriteFile(imgPath, data, 0o644); writeErr != nil {
+			continue
+		}
+		mdContent += fmt.Sprintf("\n\n![Image %d](%s)\n", i+1, imgFilename)
+	}
+
+	return os.WriteFile(path, []byte(mdContent), 0o644)
 }
 
 func (a *App) viewImageTool(argsJSON string) string {

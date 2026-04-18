@@ -92,7 +92,7 @@ function App() {
   const [showSettings, setShowSettings] = useState(false);
   const [settings, setSettings] = useState<any>(null);
   const [lightboxImage, setLightboxImage] = useState<string | null>(null);
-  const [expandedReport, setExpandedReport] = useState<{ title: string; filename: string; content: string } | null>(null);
+  const [expandedReport, setExpandedReport] = useState<{ title: string; filename: string; content: string; imageIds?: string[] } | null>(null);
   const [sidebarWidth, setSidebarWidth] = useState(280);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const resizingRef = useRef(false);
@@ -496,10 +496,17 @@ function App() {
               <span className="report-title">{expandedReport.title}</span>
               <div className="report-actions">
                 <button onClick={() => { navigator.clipboard.writeText(expandedReport.content); }}>Copy</button>
-                <button onClick={() => { SaveReport(expandedReport.content, expandedReport.filename); }}>Save</button>
+                <button onClick={() => { SaveReport(expandedReport.content, expandedReport.filename, expandedReport.imageIds?.map(id => getCachedImage(id)) || []).catch((e: any) => alert('Save error: ' + e)); }}>Save</button>
                 <button onClick={() => setExpandedReport(null)}>Close</button>
               </div>
             </div>
+            {expandedReport.imageIds && expandedReport.imageIds.length > 0 && (
+              <div className="report-images" style={{padding: '12px 24px'}}>
+                {expandedReport.imageIds.map((id, j) => (
+                  <img key={j} src={getCachedImage(id)} alt="" className="report-image" style={{maxHeight: '200px'}} onClick={() => setLightboxImage(getCachedImage(id))} />
+                ))}
+              </div>
+            )}
             <div className="report-fullscreen-content markdown-body">
               <ReactMarkdown remarkPlugins={[remarkGfm, remarkBreaks]} rehypePlugins={[rehypeHighlight]} components={{img: ({src, alt}) => <img src={src} alt={alt || ''} style={{maxWidth: '100%', borderRadius: '8px', margin: '8px 0'}} />}}>
                 {expandedReport.content}
@@ -925,9 +932,9 @@ function App() {
                   <div className="report-header">
                     <span className="report-title">{msg.report.title}</span>
                     <div className="report-actions">
-                      <button onClick={() => setExpandedReport({ title: msg.report!.title, filename: msg.report!.filename, content: msg.content })}>Expand</button>
+                      <button onClick={() => setExpandedReport({ title: msg.report!.title, filename: msg.report!.filename, content: msg.content, imageIds: msg.imageIds })}>Expand</button>
                       <button onClick={() => { navigator.clipboard.writeText(msg.report!.content); }}>Copy</button>
-                      <button onClick={() => { SaveReport(msg.report!.content, msg.report!.filename); }}>Save</button>
+                      <button onClick={() => { SaveReport(msg.report!.content, msg.report!.filename, msg.imageIds?.map(id => getCachedImage(id)) || []); }}>Save</button>
                     </div>
                   </div>
                   {msg.imageIds && msg.imageIds.length > 0 && (
@@ -937,7 +944,7 @@ function App() {
                       ))}
                     </div>
                   )}
-                  <div className="report-content markdown-body" onClick={() => setExpandedReport({ title: msg.report!.title, filename: msg.report!.filename, content: msg.content })}>
+                  <div className="report-content markdown-body" onClick={() => setExpandedReport({ title: msg.report!.title, filename: msg.report!.filename, content: msg.content, imageIds: msg.imageIds })}>
                     <ReactMarkdown remarkPlugins={[remarkGfm, remarkBreaks]} rehypePlugins={[rehypeHighlight]} components={{img: ({src, alt}) => <img src={src} alt={alt || ''} style={{maxWidth: '100%', borderRadius: '8px', margin: '8px 0'}} />}}>
                       {msg.content}
                     </ReactMarkdown>

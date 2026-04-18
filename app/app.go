@@ -210,6 +210,7 @@ func (a *App) NewSession() string {
 		UpdatedAt: now,
 	}
 	a.tokenStats = TokenStats{}
+	a.autoSave()
 	return a.session.ID
 }
 

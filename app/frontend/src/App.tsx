@@ -174,6 +174,10 @@ function App() {
       setTools(t || []);
     });
 
+    const offTitleUpdated = EventsOn('chat:title_updated', () => {
+      ListSessions().then((s) => setSessions(s || []));
+    });
+
     return () => {
       offToken();
       offDone();
@@ -183,6 +187,7 @@ function App() {
       offThinking();
       offPinned();
       offToolsUpdated();
+      offTitleUpdated();
     };
   }, []);
 
@@ -220,6 +225,9 @@ function App() {
   }
 
   const handleSend = useCallback(async (text: string, images: string[]) => {
+    // Ensure current session appears in session list
+    ListSessions().then((s) => setSessions(s || []));
+
     const now = new Date();
     const timestamp = now.toLocaleTimeString('ja-JP', { hour12: false });
 
@@ -266,13 +274,19 @@ function App() {
   }
 
   async function handleNewSession() {
-    await NewSession();
+    const id = await NewSession();
     setMessages([]);
-    ListSessions().then((s) => setSessions(s || []));
+    // Immediately show the new session in the list
+    const now = new Date().toLocaleString('ja-JP', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' });
+    setSessions(prev => [{ id, title: 'New Chat', updated_at: now }, ...prev]);
     refreshStatus();
   }
 
   const [deleteConfirm, setDeleteConfirm] = useState<string | null>(null);
+  const [selectMode, setSelectMode] = useState(false);
+  const [selectedSessions, setSelectedSessions] = useState<Set<string>>(new Set());
+  const [pinnedSelectMode, setPinnedSelectMode] = useState(false);
+  const [selectedPinned, setSelectedPinned] = useState<Set<number>>(new Set());
   const [editingSession, setEditingSession] = useState<string | null>(null);
   const [editTitle, setEditTitle] = useState('');
   const [editingPinned, setEditingPinned] = useState<number | null>(null);
@@ -285,11 +299,52 @@ function App() {
     setDeleteConfirm(id);
   }
 
+  async function bulkDeleteSessions() {
+    for (const id of selectedSessions) {
+      try { await DeleteSession(id); } catch {}
+    }
+    setMessages([]);
+    setSelectedSessions(new Set());
+    setSelectMode(false);
+    ListSessions().then((s) => setSessions(s || []));
+    refreshStatus();
+  }
+
+  async function bulkDeletePinned() {
+    // Delete in reverse order to preserve indices
+    const indices = Array.from(selectedPinned).sort((a, b) => b - a);
+    for (const i of indices) {
+      try { await DeletePinnedMemory(i); } catch {}
+    }
+    setSelectedPinned(new Set());
+    setPinnedSelectMode(false);
+    GetPinnedMemories().then(p => setPinnedMemories(p || []));
+  }
+
+  function toggleSessionSelect(id: string) {
+    setSelectedSessions(prev => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id); else next.add(id);
+      return next;
+    });
+  }
+
+  function togglePinnedSelect(i: number) {
+    setSelectedPinned(prev => {
+      const next = new Set(prev);
+      if (next.has(i)) next.delete(i); else next.add(i);
+      return next;
+    });
+  }
+
   async function confirmDelete() {
     if (!deleteConfirm) return;
     try {
       await DeleteSession(deleteConfirm);
+      setMessages([]);
+      setStreamContent('');
       ListSessions().then((s) => setSessions(s || []));
+      refreshStatus();
     } catch (err) {
       console.error('Failed to delete session:', err);
     } finally {
@@ -408,9 +463,28 @@ function App() {
         <div className="sidebar-content">
           {sidebarTab === 'sessions' && (
             <div className="session-list">
+              {sessions.length > 0 && (
+                <div className="bulk-bar">
+                  <button className="bulk-toggle" onClick={() => { setSelectMode(!selectMode); setSelectedSessions(new Set()); }}>
+                    {selectMode ? 'Cancel' : 'Select'}
+                  </button>
+                  {selectMode && (
+                    <button className="bulk-toggle" onClick={() => {
+                      if (selectedSessions.size === sessions.length) setSelectedSessions(new Set());
+                      else setSelectedSessions(new Set(sessions.map(s => s.id)));
+                    }}>{selectedSessions.size === sessions.length ? 'None' : 'All'}</button>
+                  )}
+                  {selectMode && selectedSessions.size > 0 && (
+                    <button className="bulk-delete" onClick={bulkDeleteSessions}>Delete ({selectedSessions.size})</button>
+                  )}
+                </div>
+              )}
               {sessions.map(s => (
-                <div key={s.id} className="session-item">
-                  <div className="session-info" onClick={() => handleLoadSession(s.id)}>
+                <div key={s.id} className={`session-item ${selectedSessions.has(s.id) ? 'selected' : ''}`}>
+                  {selectMode && (
+                    <input type="checkbox" className="session-checkbox" checked={selectedSessions.has(s.id)} onChange={() => toggleSessionSelect(s.id)} />
+                  )}
+                  <div className="session-info" onClick={() => selectMode ? toggleSessionSelect(s.id) : handleLoadSession(s.id)}>
                     {editingSession === s.id ? (
                       <input
                         className="session-title-edit"
@@ -424,11 +498,11 @@ function App() {
                         autoFocus
                       />
                     ) : (
-                      <span className="session-title" onDoubleClick={(e) => { e.stopPropagation(); startRename(s.id, s.title); }}>{s.title}</span>
+                      <span className="session-title" onDoubleClick={(e) => { if (!selectMode) { e.stopPropagation(); startRename(s.id, s.title); } }}>{s.title}</span>
                     )}
                     <span className="session-date">{s.updated_at}</span>
                   </div>
-                  <button className="session-delete" onClick={(e) => { e.stopPropagation(); handleDeleteSession(s.id); }} title="Delete">&#x2715;</button>
+                  {!selectMode && <button className="session-delete" onClick={(e) => { e.stopPropagation(); handleDeleteSession(s.id); }} title="Delete">&#x2715;</button>}
                 </div>
               ))}
               {deleteConfirm && (
@@ -496,9 +570,26 @@ function App() {
               </div>
               {pinnedMemories.length > 0 && (
                 <div className="pinned-list">
-                  <label className="pinned-header">Remembered Facts</label>
+                  <div className="bulk-bar">
+                    <label className="pinned-header">Remembered Facts</label>
+                    <button className="bulk-toggle" onClick={() => { setPinnedSelectMode(!pinnedSelectMode); setSelectedPinned(new Set()); }}>
+                      {pinnedSelectMode ? 'Cancel' : 'Select'}
+                    </button>
+                    {pinnedSelectMode && (
+                      <button className="bulk-toggle" onClick={() => {
+                        if (selectedPinned.size === pinnedMemories.length) setSelectedPinned(new Set());
+                        else setSelectedPinned(new Set(pinnedMemories.map((_, i) => i)));
+                      }}>{selectedPinned.size === pinnedMemories.length ? 'None' : 'All'}</button>
+                    )}
+                    {pinnedSelectMode && selectedPinned.size > 0 && (
+                      <button className="bulk-delete" onClick={bulkDeletePinned}>Delete ({selectedPinned.size})</button>
+                    )}
+                  </div>
                   {pinnedMemories.map((p, i) => (
-                    <div key={i} className="pinned-item">
+                    <div key={i} className={`pinned-item ${selectedPinned.has(i) ? 'selected' : ''}`}>
+                      {pinnedSelectMode && (
+                        <input type="checkbox" className="pinned-checkbox" checked={selectedPinned.has(i)} onChange={() => togglePinnedSelect(i)} />
+                      )}
                       {editingPinned === i ? (
                         <div className="pinned-edit">
                           <select value={editPinnedCategory} onChange={e => setEditPinnedCategory(e.target.value)}>
@@ -550,7 +641,7 @@ function App() {
                             {p.native_fact && p.native_fact !== p.fact && <span className="pinned-fact-en">{p.fact}</span>}
                             <span className="pinned-time">{p.created_at ? new Date(p.created_at).toLocaleString('ja-JP', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }) : ''}</span>
                           </div>
-                          <button className="pinned-delete" onClick={() => setDeletePinnedConfirm(i)}>&#x2715;</button>
+                          {!pinnedSelectMode && <button className="pinned-delete" onClick={() => setDeletePinnedConfirm(i)}>&#x2715;</button>}
                           {deletePinnedConfirm === i && (
                             <div className="pinned-confirm">
                               <button className="pinned-confirm-yes" onClick={() => {

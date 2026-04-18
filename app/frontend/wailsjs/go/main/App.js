@@ -82,6 +82,10 @@ export function SaveImageToFile(arg1) {
   return window['go']['main']['App']['SaveImageToFile'](arg1);
 }
 
+export function SaveReport(arg1, arg2) {
+  return window['go']['main']['App']['SaveReport'](arg1, arg2);
+}
+
 export function SaveSidebarState(arg1, arg2) {
   return window['go']['main']['App']['SaveSidebarState'](arg1, arg2);
 }

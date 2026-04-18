@@ -25,12 +25,13 @@ import (
 
 // ChatMessage is exposed to the frontend.
 type ChatMessage struct {
-	Role      string   `json:"role"`
-	Content   string   `json:"content"`
-	Timestamp string   `json:"timestamp"`
-	Images    []string `json:"images,omitempty"`
-	InTokens  int      `json:"in_tokens,omitempty"`
-	OutTokens int      `json:"out_tokens,omitempty"`
+	Role      string            `json:"role"`
+	Content   string            `json:"content"`
+	Timestamp string            `json:"timestamp"`
+	Images    []string          `json:"images,omitempty"`
+	InTokens  int               `json:"in_tokens,omitempty"`
+	OutTokens int               `json:"out_tokens,omitempty"`
+	Report    *memory.ReportData `json:"report,omitempty"`
 }
 
 // ToolInfo is exposed to the frontend.
@@ -231,12 +232,18 @@ func (a *App) LoadSession(id string) ([]ChatMessage, error) {
 		if r.Role == "system" {
 			continue
 		}
+		content := r.Content
+		// Resolve image references in reports for display
+		if r.Role == "report" && r.Report != nil {
+			content = a.resolveReportImages(content)
+		}
 		msg := ChatMessage{
 			Role:      r.Role,
-			Content:   r.Content,
+			Content:   content,
 			Timestamp: r.Timestamp.Format("15:04:05"),
 			InTokens:  r.InTokens,
 			OutTokens: r.OutTokens,
+			Report:    r.Report,
 		}
 		// Load images from disk for display
 		if len(r.Images) > 0 && a.images != nil {
@@ -1163,10 +1170,21 @@ func (a *App) buildMessages(systemPrompt string) []client.Message {
 					content = wrapped
 				}
 			}
-			// Send tool results as "user" role so LLM can see them
+			// Map roles for OpenAI API compatibility
 			role := r.Role
 			if role == "tool" {
 				role = "user"
+			} else if role == "report" {
+				role = "assistant"
+				// Truncate report content for LLM context (full content is in frontend)
+				if r.Report != nil {
+					runes := []rune(r.Content)
+					if len(runes) > 200 {
+						content = fmt.Sprintf("[Report: %s] %s... (truncated)", r.Report.Title, string(runes[:200]))
+					} else {
+						content = fmt.Sprintf("[Report: %s] %s", r.Report.Title, r.Content)
+					}
+				}
 			}
 			// Include images: only the most recent image as actual data,
 			// older images as text descriptions to avoid VLM confusion
@@ -1250,6 +1268,31 @@ func (a *App) builtinTools() []client.Tool {
 				},
 			},
 		},
+		{
+			Type: "function",
+			Function: client.ToolFunction{
+				Name:        "create-report",
+				Description: "Create and display a Markdown report. Use this when the user asks to create, write, summarize, or compile a report or document. The report will be displayed in the chat and the user can save it to a file.",
+				Parameters: map[string]any{
+					"type": "object",
+					"properties": map[string]any{
+						"title": map[string]any{
+							"type":        "string",
+							"description": "Report title",
+						},
+						"filename": map[string]any{
+							"type":        "string",
+							"description": "Suggested filename (e.g. report.md)",
+						},
+						"content": map[string]any{
+							"type":        "string",
+							"description": "The full Markdown content of the report",
+						},
+					},
+					"required": []string{"title", "content"},
+				},
+			},
+		},
 	}
 }
 
@@ -1260,6 +1303,8 @@ func (a *App) handleBuiltinTool(name, args string) (string, bool) {
 		return a.listImagesTool(), true
 	case "view-image":
 		return a.viewImageTool(args), true
+	case "create-report":
+		return a.createReportTool(args), true
 	default:
 		return "", false
 	}
@@ -1292,7 +1337,221 @@ func (a *App) listImagesTool() string {
 	if len(entries) == 0 {
 		return "No images found in this conversation."
 	}
-	return strings.Join(entries, "\n")
+	return strings.Join(entries, "\n") + "\n\nTo embed in a report, use: ![description](image:ID)"
+}
+
+func (a *App) createReportTool(argsJSON string) string {
+	var args struct {
+		Title    string `json:"title"`
+		Filename string `json:"filename"`
+		Content  string `json:"content"`
+	}
+	if err := json.Unmarshal([]byte(argsJSON), &args); err != nil {
+		return "Error: invalid arguments"
+	}
+
+	if args.Content == "" {
+		return "Error: content is empty"
+	}
+
+	filename := args.Filename
+	if filename == "" {
+		filename = "report.md"
+	}
+
+	// Extract image refs, save to ImageStore, strip from content
+	reportImageEntries, reportImageURLs := a.saveReportImages(args.Content)
+	cleanContent := stripMarkdownImages(args.Content)
+
+	a.session.Records = append(a.session.Records, memory.Record{
+		Timestamp: time.Now(),
+		Role:      "report",
+		Content:   cleanContent,
+		Tier:      memory.TierHot,
+		Report:    &memory.ReportData{Title: args.Title, Filename: filename},
+		Images:    reportImageEntries,
+	})
+
+	// Emit report to frontend with images as separate data URLs
+	wailsRuntime.EventsEmit(a.ctx, "chat:report", map[string]any{
+		"title":    args.Title,
+		"filename": filename,
+		"content":  cleanContent,
+		"images":   reportImageURLs,
+	})
+
+	return fmt.Sprintf("Report '%s' created and displayed to user.", args.Title)
+}
+
+// saveReportImages extracts image refs from report, saves to ImageStore, returns entries and data URLs.
+func (a *App) saveReportImages(content string) ([]memory.ImageEntry, []string) {
+	var entries []memory.ImageEntry
+	var urls []string
+
+	refs := a.extractReportImageURLs(content)
+	for _, ref := range refs {
+		dataURL := ref["url"]
+		if dataURL == "" || a.images == nil {
+			continue
+		}
+		// Save to ImageStore
+		id, mime, err := a.images.Save(dataURL)
+		if err == nil {
+			entries = append(entries, memory.ImageEntry{ID: id, MimeType: mime})
+		}
+		urls = append(urls, dataURL)
+	}
+	return entries, urls
+}
+
+// extractReportImageURLs finds image references in report and returns data URLs.
+func (a *App) extractReportImageURLs(content string) []map[string]string {
+	var images []map[string]string
+	lines := strings.Split(content, "\n")
+	for _, line := range lines {
+		idx := strings.Index(line, "![")
+		if idx < 0 {
+			continue
+		}
+		altStart := idx + 2
+		altEnd := strings.Index(line[altStart:], "]")
+		if altEnd < 0 {
+			continue
+		}
+		alt := line[altStart : altStart+altEnd]
+		pStart := strings.Index(line[altStart+altEnd:], "(")
+		if pStart < 0 {
+			continue
+		}
+		pStart += altStart + altEnd + 1
+		pEnd := strings.Index(line[pStart:], ")")
+		if pEnd < 0 {
+			continue
+		}
+		ref := line[pStart : pStart+pEnd]
+
+		var dataURL string
+		if strings.HasPrefix(ref, "image:") {
+			imageRef := strings.TrimPrefix(ref, "image:")
+			for _, r := range a.session.Records {
+				for _, img := range r.Images {
+					if img.ID == imageRef {
+						if du, err := a.images.LoadAsDataURL(img.ID, img.MimeType); err == nil {
+							dataURL = du
+						}
+						break
+					}
+				}
+				if dataURL != "" {
+					break
+				}
+			}
+			if dataURL == "" {
+				dataURL = a.fileToDataURL(imageRef)
+			}
+		} else if strings.HasPrefix(ref, "blob:") {
+			blobRef := strings.TrimPrefix(ref, "blob:")
+			if a.jobs != nil {
+				dataURL = a.fileToDataURL(a.jobs.BlobPath(blobRef))
+			}
+		}
+
+		if dataURL != "" {
+			images = append(images, map[string]string{"alt": alt, "url": dataURL})
+		}
+	}
+	return images
+}
+
+// stripMarkdownImages removes ![alt](url) lines from markdown.
+func stripMarkdownImages(content string) string {
+	lines := strings.Split(content, "\n")
+	var result []string
+	for _, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		if strings.HasPrefix(trimmed, "![") && strings.Contains(trimmed, "](") && strings.HasSuffix(trimmed, ")") {
+			continue
+		}
+		result = append(result, line)
+	}
+	return strings.Join(result, "\n")
+}
+
+// resolveReportImages replaces image:ID references with data URLs in report content.
+// Supports: ![alt](image:filename.png) and ![alt](blob:job-id/filename.png)
+func (a *App) resolveReportImages(content string) string {
+	lines := strings.Split(content, "\n")
+	for i, line := range lines {
+		// Find markdown image refs: ![...](image:...) or ![...](blob:...)
+		if !strings.Contains(line, "](image:") && !strings.Contains(line, "](blob:") {
+			continue
+		}
+		idx := strings.Index(line, "![")
+		if idx < 0 {
+			continue
+		}
+		pStart := strings.Index(line[idx:], "](")
+		if pStart < 0 {
+			continue
+		}
+		pStart += idx + 2
+		pEnd := strings.Index(line[pStart:], ")")
+		if pEnd < 0 {
+			continue
+		}
+		ref := line[pStart : pStart+pEnd]
+
+		var dataURL string
+		if strings.HasPrefix(ref, "image:") {
+			imageRef := strings.TrimPrefix(ref, "image:")
+			// Search in session images
+			for _, r := range a.session.Records {
+				for _, img := range r.Images {
+					if img.ID == imageRef {
+						if du, err := a.images.LoadAsDataURL(img.ID, img.MimeType); err == nil {
+							dataURL = du
+						}
+						break
+					}
+				}
+				if dataURL != "" {
+					break
+				}
+			}
+			// Search in blobs
+			if dataURL == "" {
+				dataURL = a.fileToDataURL(imageRef)
+			}
+		} else if strings.HasPrefix(ref, "blob:") {
+			blobRef := strings.TrimPrefix(ref, "blob:")
+			if a.jobs != nil {
+				blobPath := a.jobs.BlobPath(blobRef)
+				dataURL = a.fileToDataURL(blobPath)
+			}
+		}
+
+		if dataURL != "" {
+			lines[i] = line[:pStart] + dataURL + line[pStart+pEnd:]
+		}
+	}
+	return strings.Join(lines, "\n")
+}
+
+// SaveReport is called from the frontend to save a displayed report.
+func (a *App) SaveReport(content, suggestedFilename string) error {
+	path, err := wailsRuntime.SaveFileDialog(a.ctx, wailsRuntime.SaveDialogOptions{
+		Title:           "Save Report",
+		DefaultFilename: suggestedFilename,
+		Filters: []wailsRuntime.FileFilter{
+			{DisplayName: "Markdown", Pattern: "*.md"},
+			{DisplayName: "Text", Pattern: "*.txt"},
+			{DisplayName: "All Files", Pattern: "*"},
+		},
+	})
+	if err != nil || path == "" {
+		return err
+	}
+	return os.WriteFile(path, []byte(content), 0o644)
 }
 
 func (a *App) viewImageTool(argsJSON string) string {

@@ -21,6 +21,12 @@ const (
 	TierCold Tier = "cold"
 )
 
+// ReportData holds report metadata for display.
+type ReportData struct {
+	Title    string `json:"title"`
+	Filename string `json:"filename"`
+}
+
 // Record is a single memory entry with timestamp.
 type Record struct {
 	Timestamp    time.Time    `json:"timestamp"`
@@ -31,6 +37,7 @@ type Record struct {
 	Images       []ImageEntry `json:"images,omitempty"`
 	InTokens     int          `json:"in_tokens,omitempty"`
 	OutTokens    int          `json:"out_tokens,omitempty"`
+	Report       *ReportData  `json:"report,omitempty"`
 }
 
 // TimeRange represents the time span of a summarized memory.

@@ -378,7 +378,7 @@ func (a *App) executePhase(ctx context.Context, systemPrompt string, plan *Plan,
 
 		wailsRuntime.EventsEmit(a.ctx, "chat:thinking", nil)
 
-		interimMessages := a.buildMessagesWithPrompt(execPrompt)
+		interimMessages := a.buildMessagesWithPrompt(systemPrompt) // use base prompt without tool hints
 		// Add instruction for interim summary
 		interimMessages = append(interimMessages, client.TextMessage("system",
 			"The tool(s) have been executed and the results are shown above. "+

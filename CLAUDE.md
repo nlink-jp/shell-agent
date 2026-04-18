@@ -12,19 +12,23 @@ macOS local LLM chat & agent tool. Wails v2 (Go + React) main app + SwiftUI laun
 
 ## Architecture
 
-- Go backend: `app/internal/` packages (chat, client, config, mcp, memory, toolcall)
-- React frontend: `app/frontend/src/` (App.tsx is the single main component)
+- Go backend: `app/app.go` (all bindings + agent loop) + `app/internal/` packages
+- React frontend: `app/frontend/src/` — App.tsx (main), ChatInput.tsx (isolated input)
 - SwiftUI launcher: `launcher/ShellAgentLauncher/`
+- Themes: `app/frontend/src/themes.css` (CSS custom properties)
 
 ## Key Design Decisions
 
-- mcp-guardian handles all MCP communication as stdio child process (one per server)
-- MITL required for write/execute tool categories, not for read
-- Memory is Hot/Warm/Cold with timestamps in JSON structure
-- Pinned Memory: LLM autonomously extracts important facts, persists across sessions
-- Only latest image sent as actual data to LLM; older images via view-image tool
-- nlk packages (guard, jsonfix, strip) for security — local replace in go.mod
-- IME guard uses ref + 50ms delay on compositionEnd (WebKit race condition)
+- **Non-streaming for tool calls** — streaming unreliable for tool call detection with local LLMs
+- **MITL** — required for write/execute tool categories, not for read
+- **Job workspace** — each tool execution gets temp dir + blob finalization
+- **Memory** — Hot/Warm/Cold with timestamps; Warm via LLM summarization
+- **Pinned Memory** — bilingual (English + native), LLM auto-extracts, cross-session
+- **Image handling** — latest image as data to LLM; older via view-image tool recall; generated images via blob + tool result event (never embedded in response text)
+- **Input performance** — ChatInput is memo'd separate component; image data in ref cache, not state
+- **Security** — nlk/guard (nonce per turn), jsonfix (tool args), strip (think tags)
+- **MCP** — multiple guardians, one per MCP server, `mcp__guardian__tool` namespace
+- **Tool scripts** — `SHELL_AGENT_WORK_DIR` env var; need explicit PATH for non-shell env
 
 ## Series
 

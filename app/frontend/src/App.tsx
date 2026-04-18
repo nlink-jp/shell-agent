@@ -79,11 +79,16 @@ function App() {
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
-  // Apply theme on load and when settings change
+  // Apply theme and restore last session on load
   useEffect(() => {
     GetConfig().then((cfg: any) => {
       if (cfg?.theme) {
         document.documentElement.setAttribute('data-theme', cfg.theme);
+      }
+      if (cfg?.startup_mode === 'last' && cfg?.last_session) {
+        LoadSession(cfg.last_session).then((msgs) => {
+          if (msgs) setMessages(msgs);
+        }).catch(() => {});
       }
     });
   }, []);
@@ -497,6 +502,19 @@ function App() {
                     <option value="light">Light</option>
                     <option value="warm">Warm</option>
                     <option value="midnight">Midnight</option>
+                  </select>
+                </label>
+              </div>
+
+              <div className="settings-section">
+                <h3>Startup</h3>
+                <label>
+                  <span>On Launch</span>
+                  <select value={settings.startup_mode || 'new'} onChange={e => {
+                    setSettings((prev: any) => ({ ...prev, startup_mode: e.target.value }));
+                  }}>
+                    <option value="new">New Chat</option>
+                    <option value="last">Resume Last Chat</option>
                   </select>
                 </label>
               </div>

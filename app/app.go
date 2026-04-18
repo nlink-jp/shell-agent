@@ -131,6 +131,17 @@ func (a *App) startup(ctx context.Context) {
 	a.tools = toolcall.NewRegistry(config.ExpandPath(cfg.Tools.ScriptDir))
 	_ = a.tools.Scan()
 
+	// Restore last session or start new
+	if cfg.StartupMode == "last" && cfg.LastSession != "" {
+		if sess, err := store.Load(cfg.LastSession); err == nil {
+			a.session = sess
+		} else {
+			a.NewSession()
+		}
+	} else {
+		a.NewSession()
+	}
+
 	// Start mcp-guardian instances
 	a.guardians = make(map[string]*mcp.Guardian)
 	for _, gc := range cfg.Guardians {
@@ -149,8 +160,6 @@ func (a *App) startup(ctx context.Context) {
 			fmt.Printf("mcp-guardian [%s] started: %d tools\n", gc.Name, len(g.Tools()))
 		}
 	}
-
-	a.NewSession()
 }
 
 // shutdown is called when the app is closing.
@@ -168,6 +177,9 @@ func (a *App) shutdown(_ context.Context) {
 		x, y := wailsRuntime.WindowGetPosition(a.ctx)
 		a.cfg.Window = config.WindowConfig{
 			X: x, Y: y, Width: w, Height: h,
+		}
+		if a.session != nil {
+			a.cfg.LastSession = a.session.ID
 		}
 		_ = a.cfg.Save()
 	}

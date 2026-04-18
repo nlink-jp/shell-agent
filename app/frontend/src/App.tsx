@@ -24,7 +24,7 @@ interface Message {
   imageIds?: string[];
   in_tokens?: number;
   out_tokens?: number;
-  report?: { title: string; filename: string; content: string };
+  report?: { title: string; filename: string };
 }
 
 interface ToolInfo {
@@ -93,21 +93,38 @@ function App() {
   const [settings, setSettings] = useState<any>(null);
   const [lightboxImage, setLightboxImage] = useState<string | null>(null);
   const [expandedReport, setExpandedReport] = useState<{ title: string; filename: string; content: string; imageIds?: string[] } | null>(null);
+  // Note: expandedReport.content comes from msg.content, not msg.report.content
   const [sidebarWidth, setSidebarWidth] = useState(280);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const resizingRef = useRef(false);
   const composingRef = useRef(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const imageCacheRef = useRef<Record<string, string>>({});
-  let nextImageId = useRef(0);
 
-  function cacheImage(dataURL: string): string {
-    const id = `img-${nextImageId.current++}`;
-    imageCacheRef.current[id] = dataURL;
-    return id;
+  // Cache an image by its ImageStore ID. If dataURL is provided, cache it.
+  // If only ID is provided, load lazily from backend.
+  function cacheImage(idOrDataURL: string): string {
+    // If it looks like a data URL, save it and return a temporary ID
+    if (idOrDataURL.startsWith('data:')) {
+      // This is a data URL from user upload — will be saved by backend
+      const tempId = `temp-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
+      imageCacheRef.current[tempId] = idOrDataURL;
+      return tempId;
+    }
+    // It's an ImageStore ID — keep as-is
+    return idOrDataURL;
   }
 
   function getCachedImage(id: string): string {
+    if (imageCacheRef.current[id]) {
+      return imageCacheRef.current[id];
+    }
+    // Lazy load from backend
+    if (id && !id.startsWith('temp-')) {
+      GetImageDataURL(id, 'image/png').then(du => {
+        if (du) imageCacheRef.current[id] = du;
+      });
+    }
     return imageCacheRef.current[id] || '';
   }
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -158,7 +175,7 @@ function App() {
       setExecutingArgs(info.args || '');
     });
 
-    const offToolResult = EventsOn('chat:toolresult', (res: ToolResult) => {
+    const offToolResult = EventsOn('chat:toolresult', (res: any) => {
       setExecutingTool(null);
       setExecutingArgs('');
       const now = new Date().toLocaleTimeString('ja-JP', { hour12: false });
@@ -166,7 +183,7 @@ function App() {
         role: 'tool',
         content: `**${res.name}**\n\n${res.result}`,
         timestamp: now,
-        imageIds: res.image ? [cacheImage(res.image)] : undefined,
+        imageIds: res.imageId ? [res.imageId] : undefined,
       }]);
     });
 
@@ -186,15 +203,14 @@ function App() {
       setCurrentPhase(phase);
     });
 
-    const offReport = EventsOn('chat:report', (report: { title: string; filename: string; content: string; images?: string[] }) => {
+    const offReport = EventsOn('chat:report', (report: { title: string; filename: string; content: string; imageIds?: string[] }) => {
       const now = new Date().toLocaleTimeString('ja-JP', { hour12: false });
-      const imageIds = report.images ? report.images.map((img: string) => cacheImage(img)) : undefined;
       setMessages(prev => [...prev, {
         role: 'report',
         content: report.content,
         timestamp: now,
-        report: { title: report.title, filename: report.filename, content: report.content },
-        imageIds,
+        report: { title: report.title, filename: report.filename },
+        imageIds: report.imageIds,
       }]);
     });
 
@@ -416,7 +432,7 @@ function App() {
       role: m.role,
       content: m.content,
       timestamp: m.timestamp,
-      imageIds: m.images ? m.images.map((img: string) => cacheImage(img)) : undefined,
+      imageIds: m.images || undefined, // ImageStore IDs directly
       in_tokens: m.in_tokens,
       out_tokens: m.out_tokens,
       report: m.report || undefined,
@@ -496,7 +512,7 @@ function App() {
               <span className="report-title">{expandedReport.title}</span>
               <div className="report-actions">
                 <button onClick={() => { navigator.clipboard.writeText(expandedReport.content); }}>Copy</button>
-                <button onClick={() => { SaveReport(expandedReport.content, expandedReport.filename, expandedReport.imageIds?.map(id => getCachedImage(id)) || []).catch((e: any) => alert('Save error: ' + e)); }}>Save</button>
+                <button onClick={() => { SaveReport(expandedReport.content || '', expandedReport.filename, expandedReport.imageIds || []).catch((e: any) => alert('Save error: ' + e)); }}>Save</button>
                 <button onClick={() => setExpandedReport(null)}>Close</button>
               </div>
             </div>
@@ -933,8 +949,8 @@ function App() {
                     <span className="report-title">{msg.report.title}</span>
                     <div className="report-actions">
                       <button onClick={() => setExpandedReport({ title: msg.report!.title, filename: msg.report!.filename, content: msg.content, imageIds: msg.imageIds })}>Expand</button>
-                      <button onClick={() => { navigator.clipboard.writeText(msg.report!.content); }}>Copy</button>
-                      <button onClick={() => { SaveReport(msg.report!.content, msg.report!.filename, msg.imageIds?.map(id => getCachedImage(id)) || []); }}>Save</button>
+                      <button onClick={() => { navigator.clipboard.writeText(msg.content); }}>Copy</button>
+                      <button onClick={() => { SaveReport(msg.content, msg.report!.filename, msg.imageIds || []); }}>Save</button>
                     </div>
                   </div>
                   {msg.imageIds && msg.imageIds.length > 0 && (

@@ -185,15 +185,10 @@ func (a *App) agentLoop(ctx context.Context, systemPrompt string, toolDefs []cli
 				al.log("[ROUND %d]   result: %s", round, truncate(result, 200))
 			}
 
-			// Extract image and emit tool result
+			// Save image to ImageStore and emit ID (not data URL)
+			var toolImages []memory.ImageEntry
 			imageDataURL := a.extractImageFromResult(result)
-			toolResultEvent := map[string]string{
-				"name":   tc.Function.Name,
-				"result": result,
-			}
-			if imageDataURL != "" {
-				toolResultEvent["image"] = imageDataURL
-			} else if strings.Contains(result, "[Artifacts produced:") {
+			if imageDataURL == "" && strings.Contains(result, "[Artifacts produced:") {
 				if idx := strings.Index(result, "[Artifacts produced:"); idx >= 0 {
 					artStr := result[idx:]
 					if end := strings.Index(artStr, "]"); end >= 0 {
@@ -202,7 +197,7 @@ func (a *App) agentLoop(ctx context.Context, systemPrompt string, toolDefs []cli
 							if a.jobs != nil {
 								blobPath := a.jobs.BlobPath(ref)
 								if du := a.fileToDataURL(blobPath); du != "" {
-									toolResultEvent["image"] = du
+									imageDataURL = du
 									break
 								}
 							}
@@ -210,16 +205,23 @@ func (a *App) agentLoop(ctx context.Context, systemPrompt string, toolDefs []cli
 					}
 				}
 			}
-			wailsRuntime.EventsEmit(a.ctx, "chat:toolresult", toolResultEvent)
-
-			// Save tool result with images
-			var toolImages []memory.ImageEntry
-			if imgURL, ok := toolResultEvent["image"]; ok && imgURL != "" && a.images != nil {
-				id, mime, saveErr := a.images.Save(imgURL)
+			var imageStoreID string
+			if imageDataURL != "" && a.images != nil {
+				id, mime, saveErr := a.images.Save(imageDataURL)
 				if saveErr == nil {
 					toolImages = append(toolImages, memory.ImageEntry{ID: id, MimeType: mime})
+					imageStoreID = id
 				}
 			}
+
+			toolResultEvent := map[string]string{
+				"name":   tc.Function.Name,
+				"result": result,
+			}
+			if imageStoreID != "" {
+				toolResultEvent["imageId"] = imageStoreID
+			}
+			wailsRuntime.EventsEmit(a.ctx, "chat:toolresult", toolResultEvent)
 
 			a.session.Records = append(a.session.Records, memory.Record{
 				Timestamp: time.Now(),

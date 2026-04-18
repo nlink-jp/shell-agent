@@ -3,6 +3,7 @@ package client
 import (
 	"bufio"
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -99,6 +100,14 @@ type ToolFunction struct {
 // ChatResponse is the response from /chat/completions (non-streaming).
 type ChatResponse struct {
 	Choices []Choice `json:"choices"`
+	Usage   Usage    `json:"usage"`
+}
+
+// Usage holds token consumption information.
+type Usage struct {
+	PromptTokens     int `json:"prompt_tokens"`
+	CompletionTokens int `json:"completion_tokens"`
+	TotalTokens      int `json:"total_tokens"`
 }
 
 // Choice represents one completion choice.
@@ -133,6 +142,11 @@ type StreamCallback func(token string, toolCalls []ToolCall, done bool)
 
 // Chat sends a non-streaming chat request.
 func (c *Client) Chat(messages []Message, tools []Tool) (*ChatResponse, error) {
+	return c.ChatWithContext(context.Background(), messages, tools)
+}
+
+// ChatWithContext sends a non-streaming chat request with cancellation support.
+func (c *Client) ChatWithContext(ctx context.Context, messages []Message, tools []Tool) (*ChatResponse, error) {
 	req := ChatRequest{
 		Model:    c.model,
 		Messages: messages,
@@ -145,7 +159,7 @@ func (c *Client) Chat(messages []Message, tools []Tool) (*ChatResponse, error) {
 		return nil, fmt.Errorf("marshal request: %w", err)
 	}
 
-	resp, err := c.doRequest(body)
+	resp, err := c.doRequestCtx(ctx, body)
 	if err != nil {
 		return nil, err
 	}
@@ -205,8 +219,12 @@ func (c *Client) ChatStream(messages []Message, tools []Tool, cb StreamCallback)
 }
 
 func (c *Client) doRequest(body []byte) (*http.Response, error) {
+	return c.doRequestCtx(context.Background(), body)
+}
+
+func (c *Client) doRequestCtx(ctx context.Context, body []byte) (*http.Response, error) {
 	url := c.endpoint + "/chat/completions"
-	req, err := http.NewRequest("POST", url, bytes.NewReader(body))
+	req, err := http.NewRequestWithContext(ctx, "POST", url, bytes.NewReader(body))
 	if err != nil {
 		return nil, fmt.Errorf("create request: %w", err)
 	}

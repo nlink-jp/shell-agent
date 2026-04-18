@@ -2,18 +2,28 @@ import { useState, useRef, memo } from 'react';
 
 interface Props {
   onSend: (text: string, images: string[]) => void;
+  onCancel: () => void;
   disabled: boolean;
 }
 
-function ChatInput({ onSend, disabled }: Props) {
+function ChatInput({ onSend, onCancel, disabled }: Props) {
   const [input, setInput] = useState('');
   const [pendingImages, setPendingImages] = useState<string[]>([]);
   const composingRef = useRef(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const historyRef = useRef<string[]>([]);
+  const historyIndexRef = useRef(-1);
+  const draftRef = useRef('');
 
   function handleSend() {
     const text = input.trim();
     if ((!text && pendingImages.length === 0) || disabled) return;
+    // Save to history
+    if (text) {
+      historyRef.current = [text, ...historyRef.current.filter(h => h !== text)].slice(0, 50);
+      historyIndexRef.current = -1;
+      draftRef.current = '';
+    }
     const images = [...pendingImages];
     setInput('');
     setPendingImages([]);
@@ -21,9 +31,44 @@ function ChatInput({ onSend, disabled }: Props) {
   }
 
   function handleKeyDown(e: React.KeyboardEvent) {
-    if (e.key === 'Enter' && e.shiftKey && !composingRef.current) {
+    if (e.key === 'Enter' && e.metaKey && !composingRef.current) {
       e.preventDefault();
       handleSend();
+      return;
+    }
+    if (e.key === 'Escape') {
+      if (disabled) {
+        onCancel();
+      }
+      return;
+    }
+    // History navigation with Up/Down when input is empty or at history
+    if (e.key === 'ArrowUp' && !composingRef.current) {
+      const textarea = e.target as HTMLTextAreaElement;
+      if (textarea.selectionStart === 0) {
+        e.preventDefault();
+        const hist = historyRef.current;
+        if (hist.length === 0) return;
+        if (historyIndexRef.current === -1) {
+          draftRef.current = input;
+        }
+        const nextIdx = Math.min(historyIndexRef.current + 1, hist.length - 1);
+        historyIndexRef.current = nextIdx;
+        setInput(hist[nextIdx]);
+      }
+    }
+    if (e.key === 'ArrowDown' && !composingRef.current) {
+      const textarea = e.target as HTMLTextAreaElement;
+      if (textarea.selectionStart === textarea.value.length) {
+        e.preventDefault();
+        if (historyIndexRef.current <= 0) {
+          historyIndexRef.current = -1;
+          setInput(draftRef.current);
+        } else {
+          historyIndexRef.current--;
+          setInput(historyRef.current[historyIndexRef.current]);
+        }
+      }
     }
   }
 
@@ -70,13 +115,12 @@ function ChatInput({ onSend, disabled }: Props) {
         <input ref={fileInputRef} type="file" accept="image/*" multiple style={{ display: 'none' }} onChange={e => { if (e.target.files) addImages(e.target.files); e.target.value = ''; }} />
         <textarea
           value={input}
-          onChange={e => setInput(e.target.value)}
+          onChange={e => { setInput(e.target.value); historyIndexRef.current = -1; }}
           onKeyDown={handleKeyDown}
           onPaste={handlePaste}
           onCompositionStart={() => { composingRef.current = true; }}
           onCompositionEnd={() => { setTimeout(() => { composingRef.current = false; }, 50); }}
-          placeholder="Type a message... (Shift+Enter to send, Enter for newline)"
-          disabled={disabled}
+          placeholder={disabled ? "Press ESC to cancel..." : "Type a message... (Cmd+Enter to send)"}
           rows={3}
         />
         <button onClick={handleSend} disabled={disabled || (!input.trim() && pendingImages.length === 0)}>

@@ -6,6 +6,10 @@ export function ApproveMITL() {
   return window['go']['main']['App']['ApproveMITL']();
 }
 
+export function CancelExecution() {
+  return window['go']['main']['App']['CancelExecution']();
+}
+
 export function DeletePinnedMemory(arg1) {
   return window['go']['main']['App']['DeletePinnedMemory'](arg1);
 }

@@ -27,6 +27,8 @@ type ChatMessage struct {
 	Content   string   `json:"content"`
 	Timestamp string   `json:"timestamp"`
 	Images    []string `json:"images,omitempty"`
+	InTokens  int      `json:"in_tokens,omitempty"`
+	OutTokens int      `json:"out_tokens,omitempty"`
 }
 
 // ToolInfo is exposed to the frontend.
@@ -45,12 +47,25 @@ type SessionInfo struct {
 
 // LLMStatus is exposed to the frontend for the monitoring panel.
 type LLMStatus struct {
-	CurrentTime   string `json:"current_time"`
-	HotMessages   int    `json:"hot_messages"`
-	WarmSummaries int    `json:"warm_summaries"`
-	ColdSummaries int    `json:"cold_summaries"`
-	TokensUsed    int    `json:"tokens_used"`
-	TokenLimit    int    `json:"token_limit"`
+	CurrentTime      string `json:"current_time"`
+	HotMessages      int    `json:"hot_messages"`
+	WarmSummaries    int    `json:"warm_summaries"`
+	ColdSummaries    int    `json:"cold_summaries"`
+	TokensUsed       int    `json:"tokens_used"`
+	TokenLimit       int    `json:"token_limit"`
+	SessionInput     int    `json:"session_input"`
+	SessionOutput    int    `json:"session_output"`
+	SessionTotal     int    `json:"session_total"`
+	LastInput        int    `json:"last_input"`
+	LastOutput       int    `json:"last_output"`
+}
+
+// TokenStats tracks token usage for the current session.
+type TokenStats struct {
+	TotalInput  int `json:"total_input"`
+	TotalOutput int `json:"total_output"`
+	LastInput   int `json:"last_input"`
+	LastOutput  int `json:"last_output"`
 }
 
 // ToolCallRequest is sent to the frontend for MITL approval.
@@ -73,10 +88,15 @@ type App struct {
 	tools    *toolcall.Registry
 	jobs     *toolcall.JobManager
 	guardians map[string]*mcp.Guardian // name → guardian
-	session  *memory.Session
+	session    *memory.Session
+	tokenStats TokenStats
 
 	// Security: nonce tag for prompt injection defense (rotated per turn)
 	guardTag guard.Tag
+
+	// Cancel support
+	cancelMu  sync.Mutex
+	cancelFn  context.CancelFunc
 
 	// MITL approval channel
 	mitlCh   chan mitlResponse
@@ -188,6 +208,7 @@ func (a *App) NewSession() string {
 		CreatedAt: now,
 		UpdatedAt: now,
 	}
+	a.tokenStats = TokenStats{}
 	return a.session.ID
 }
 
@@ -209,6 +230,8 @@ func (a *App) LoadSession(id string) ([]ChatMessage, error) {
 			Role:      r.Role,
 			Content:   r.Content,
 			Timestamp: r.Timestamp.Format("15:04:05"),
+			InTokens:  r.InTokens,
+			OutTokens: r.OutTokens,
 		}
 		// Load images from disk for display
 		if len(r.Images) > 0 && a.images != nil {
@@ -272,8 +295,30 @@ func (a *App) SendMessage(content string) (ChatMessage, error) {
 	return a.sendMessage(content, nil)
 }
 
+// CancelExecution cancels any ongoing tool execution or LLM call.
+func (a *App) CancelExecution() {
+	a.cancelMu.Lock()
+	defer a.cancelMu.Unlock()
+	if a.cancelFn != nil {
+		a.cancelFn()
+	}
+}
+
 func (a *App) sendMessage(content string, images []string) (ChatMessage, error) {
 	now := time.Now()
+
+	// Set up cancellation
+	ctx, cancel := context.WithCancel(context.Background())
+	a.cancelMu.Lock()
+	a.cancelFn = cancel
+	a.cancelMu.Unlock()
+	defer func() {
+		a.cancelMu.Lock()
+		a.cancelFn = nil
+		a.cancelMu.Unlock()
+		cancel()
+	}()
+	_ = ctx // used for future cancellation checks
 
 	// Rotate guard tag per turn for prompt injection defense
 	a.guardTag = guard.NewTag()
@@ -327,10 +372,30 @@ func (a *App) sendMessage(content string, images []string) (ChatMessage, error) 
 			currentTools = toolDefs
 		}
 
-		resp, err := a.llm.Chat(messages, currentTools)
+		// Check for cancellation
+		if ctx.Err() != nil {
+			return ChatMessage{
+				Role: "assistant", Content: "(Cancelled)",
+				Timestamp: time.Now().Format("15:04:05"),
+			}, nil
+		}
+
+		resp, err := a.llm.ChatWithContext(ctx, messages, currentTools)
 		if err != nil {
+			if ctx.Err() != nil {
+				return ChatMessage{
+					Role: "assistant", Content: "(Cancelled)",
+					Timestamp: time.Now().Format("15:04:05"),
+				}, nil
+			}
 			return ChatMessage{}, err
 		}
+
+		// Track token usage
+		a.tokenStats.LastInput = resp.Usage.PromptTokens
+		a.tokenStats.LastOutput = resp.Usage.CompletionTokens
+		a.tokenStats.TotalInput += resp.Usage.PromptTokens
+		a.tokenStats.TotalOutput += resp.Usage.CompletionTokens
 
 		if len(resp.Choices) == 0 {
 			return ChatMessage{}, fmt.Errorf("empty response from LLM")
@@ -357,6 +422,8 @@ func (a *App) sendMessage(content string, images []string) (ChatMessage, error) 
 				Role:      "assistant",
 				Content:   content,
 				Tier:      memory.TierHot,
+				InTokens:  a.tokenStats.LastInput,
+				OutTokens: a.tokenStats.LastOutput,
 			})
 			a.session.UpdatedAt = respTime
 
@@ -379,6 +446,8 @@ func (a *App) sendMessage(content string, images []string) (ChatMessage, error) 
 				Role:      "assistant",
 				Content:   content,
 				Timestamp: respTime.Format("15:04:05"),
+				InTokens:  a.tokenStats.LastInput,
+				OutTokens: a.tokenStats.LastOutput,
 			}, nil
 		}
 
@@ -607,11 +676,17 @@ func (a *App) GetLLMStatus() LLMStatus {
 		}
 	}
 	return LLMStatus{
-		CurrentTime:   time.Now().Format("2006-01-02 15:04:05"),
-		HotMessages:   hot,
-		WarmSummaries: warm,
-		ColdSummaries: cold,
-		TokenLimit:    a.cfg.Memory.HotTokenLimit,
+		CurrentTime:      time.Now().Format("2006-01-02 15:04:05"),
+		HotMessages:      hot,
+		WarmSummaries:    warm,
+		ColdSummaries:    cold,
+		TokensUsed:       a.session.HotTokenCount(),
+		TokenLimit:       a.cfg.Memory.HotTokenLimit,
+		SessionInput:     a.tokenStats.TotalInput,
+		SessionOutput:    a.tokenStats.TotalOutput,
+		SessionTotal:     a.tokenStats.TotalInput + a.tokenStats.TotalOutput,
+		LastInput:        a.tokenStats.LastInput,
+		LastOutput:       a.tokenStats.LastOutput,
 	}
 }
 

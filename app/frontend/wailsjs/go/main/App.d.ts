@@ -6,6 +6,8 @@ import {memory} from '../models';
 
 export function ApproveMITL():Promise<void>;
 
+export function CancelExecution():Promise<void>;
+
 export function DeletePinnedMemory(arg1:number):Promise<boolean>;
 
 export function DeleteSession(arg1:string):Promise<void>;

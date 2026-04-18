@@ -2,7 +2,9 @@ package main
 
 import (
 	"embed"
+	"os"
 
+	"github.com/nlink-jp/shell-agent/internal/analysis"
 	"github.com/wailsapp/wails/v2"
 	"github.com/wailsapp/wails/v2/pkg/options"
 	"github.com/wailsapp/wails/v2/pkg/options/assetserver"
@@ -13,6 +15,12 @@ import (
 var assets embed.FS
 
 func main() {
+	// Subcommand routing: "analyze" runs background analysis mode
+	if len(os.Args) > 1 && os.Args[1] == "analyze" {
+		analysis.RunCLI(os.Args[2:])
+		return
+	}
+
 	app := NewApp()
 
 	err := wails.Run(&options.App{

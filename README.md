@@ -13,6 +13,7 @@ A macOS GUI chat and agent tool powered by local LLM.
 - **Markdown rendering** with syntax highlighting (GFM, code blocks, tables)
 - **Menu bar launcher** (SwiftUI) with global hotkey (Ctrl+Shift+Space)
 - **Security** — nlk/guard (prompt injection defense), nlk/jsonfix (JSON repair), nlk/strip (thinking tag removal)
+- **Data analysis** — embedded DuckDB for CSV/JSON/JSONL, natural language SQL queries, sliding window summarization, background analysis
 - **Color themes** — Dark, Light (cream + blue), Warm (brown), Midnight (navy) with live preview
 - **Settings UI** — in-app configuration for API, memory, tools, MCP guardians, theme, and startup mode
 - **Session management** — auto-generated titles, rename, delete with confirmation
@@ -37,6 +38,8 @@ shell-agent/
 | `internal/config` | JSON config with path expansion (~, $ENV) |
 | `internal/mcp` | mcp-guardian stdio child process management |
 | `internal/memory` | Hot/Warm/Cold tiers, pinned memory, image store, session persistence |
+| `internal/objstore` | Central object repository for images, blobs, and reports |
+| `internal/analysis` | DuckDB analysis engine, SQL generation, sliding window summarizer |
 | `internal/toolcall` | Shell script tool registry, header parsing, MITL categories |
 
 ## Requirements
@@ -92,6 +95,44 @@ Add MCP servers via Settings UI or `config.json`:
     }
   ]
 }
+```
+
+## Data Analysis
+
+Load data files and analyze them using natural language or SQL:
+
+```
+User: Load /path/to/sales.csv and show total revenue by region
+Agent: [load-data] → [query-preview] → Tokyo: ¥2,024,500, Osaka: ¥918,000, ...
+```
+
+### Analysis Tools
+
+| Tool | Description |
+|------|-------------|
+| `load-data` | Load CSV/JSON/JSONL into DuckDB |
+| `describe-data` | Show/annotate table schemas |
+| `query-preview` | Natural language → SQL → results |
+| `query-sql` | Execute SQL directly |
+| `suggest-analysis` | LLM suggests analysis perspectives |
+| `quick-summary` | Query + LLM summarization |
+| `analyze-bg` | Background analysis (survives app close) |
+| `analysis-status` | Check background job progress |
+| `analysis-result` | Retrieve completed report |
+| `reset-analysis` | Clear all loaded tables |
+
+### Background Analysis
+
+For large datasets, `analyze-bg` spawns a detached process that continues even after Shell Agent is closed:
+
+```
+User: Analyze access logs for security threats
+Agent: [analyze-bg] → Job started: job-1713488400000
+       ...later...
+User: Check analysis status
+Agent: [analysis-status] → done (4 windows, 5 findings)
+User: Show the report
+Agent: [analysis-result] → Security Threat Analysis report
 ```
 
 ## Default Model

@@ -13,6 +13,7 @@
 - **Markdownレンダリング** — GFM、コードブロックのシンタックスハイライト、テーブル対応
 - **メニューバーランチャー**（SwiftUI）— グローバルホットキー（Ctrl+Shift+Space）
 - **セキュリティ** — nlk/guard（プロンプトインジェクション防御）、nlk/jsonfix（JSON修復）、nlk/strip（思考タグ除去）
+- **データ分析** — DuckDB内蔵によるCSV/JSON/JSONL分析、自然言語SQLクエリ、スライドウィンドウ要約、バックグラウンド分析
 - **カラーテーマ** — Dark、Light（クリーム＋ブルー）、Warm（ブラウン）、Midnight（ネイビー）、ライブプレビュー対応
 - **設定UI** — API、メモリ、ツール、MCPガーディアン、テーマ、起動モードのアプリ内設定
 - **セッション管理** — タイトル自動生成、リネーム、確認付き削除
@@ -37,6 +38,8 @@ shell-agent/
 | `internal/config` | JSON設定管理（~、$ENV展開対応） |
 | `internal/mcp` | mcp-guardian stdio子プロセス管理 |
 | `internal/memory` | Hot/Warm/Cold階層、Pinned Memory、画像ストア、セッション永続化 |
+| `internal/objstore` | 画像・Blob・レポートの中央オブジェクトリポジトリ |
+| `internal/analysis` | DuckDB分析エンジン、SQL生成、スライドウィンドウ要約 |
 | `internal/toolcall` | シェルスクリプトツール登録、ヘッダー解析、MITLカテゴリ |
 
 ## 動作要件
@@ -92,6 +95,44 @@ make dev    # Wails devサーバーによるホットリロード
     }
   ]
 }
+```
+
+## データ分析
+
+データファイルをロードし、自然言語またはSQLで分析：
+
+```
+ユーザー: /path/to/sales.csv を読み込んで地域別の売上合計を見せて
+エージェント: [load-data] → [query-preview] → 東京: ¥2,024,500, 大阪: ¥918,000, ...
+```
+
+### 分析ツール
+
+| ツール | 説明 |
+|--------|------|
+| `load-data` | CSV/JSON/JSONLをDuckDBにロード |
+| `describe-data` | テーブルスキーマの表示・説明付与 |
+| `query-preview` | 自然言語 → SQL → 結果プレビュー |
+| `query-sql` | SQLを直接実行 |
+| `suggest-analysis` | LLMが分析観点を提案 |
+| `quick-summary` | クエリ実行 + LLM要約 |
+| `analyze-bg` | バックグラウンド分析（アプリ終了後も継続） |
+| `analysis-status` | バックグラウンドジョブの進捗確認 |
+| `analysis-result` | 完了したレポートの取得 |
+| `reset-analysis` | 全テーブルをクリア |
+
+### バックグラウンド分析
+
+大規模データセットの場合、`analyze-bg`はShell Agent終了後も継続するプロセスを起動します：
+
+```
+ユーザー: アクセスログのセキュリティ脅威を分析して
+エージェント: [analyze-bg] → ジョブ開始: job-1713488400000
+              ...しばらく後...
+ユーザー: 分析の進捗は？
+エージェント: [analysis-status] → 完了 (4ウィンドウ, 5件のFinding)
+ユーザー: レポートを見せて
+エージェント: [analysis-result] → セキュリティ脅威分析レポート
 ```
 
 ## デフォルトモデル

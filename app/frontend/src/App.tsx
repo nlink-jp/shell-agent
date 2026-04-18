@@ -13,6 +13,7 @@ import {
   UpdatePinnedMemory, DeletePinnedMemory,
   GetConfig, SaveConfig, RestartGuardians, CancelExecution,
   SaveSidebarState, ToggleTool, SaveImageToFile, CopyImageToClipboard,
+  SaveReport, GetImageDataURL,
 } from '../wailsjs/go/main/App';
 import { EventsOn } from '../wailsjs/runtime/runtime';
 
@@ -23,6 +24,7 @@ interface Message {
   imageIds?: string[];
   in_tokens?: number;
   out_tokens?: number;
+  report?: { title: string; filename: string; content: string };
 }
 
 interface ToolInfo {
@@ -90,6 +92,7 @@ function App() {
   const [showSettings, setShowSettings] = useState(false);
   const [settings, setSettings] = useState<any>(null);
   const [lightboxImage, setLightboxImage] = useState<string | null>(null);
+  const [expandedReport, setExpandedReport] = useState<{ title: string; filename: string; content: string } | null>(null);
   const [sidebarWidth, setSidebarWidth] = useState(280);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const resizingRef = useRef(false);
@@ -183,6 +186,18 @@ function App() {
       setCurrentPhase(phase);
     });
 
+    const offReport = EventsOn('chat:report', (report: { title: string; filename: string; content: string; images?: string[] }) => {
+      const now = new Date().toLocaleTimeString('ja-JP', { hour12: false });
+      const imageIds = report.images ? report.images.map((img: string) => cacheImage(img)) : undefined;
+      setMessages(prev => [...prev, {
+        role: 'report',
+        content: report.content,
+        timestamp: now,
+        report: { title: report.title, filename: report.filename, content: report.content },
+        imageIds,
+      }]);
+    });
+
     const offTitleUpdated = EventsOn('chat:title_updated', () => {
       ListSessions().then((s) => setSessions(s || []));
     });
@@ -198,6 +213,7 @@ function App() {
       offToolsUpdated();
       offTitleUpdated();
       offPhase();
+      offReport();
     };
   }, []);
 
@@ -403,6 +419,7 @@ function App() {
       imageIds: m.images ? m.images.map((img: string) => cacheImage(img)) : undefined,
       in_tokens: m.in_tokens,
       out_tokens: m.out_tokens,
+      report: m.report || undefined,
     }));
   }
 
@@ -469,6 +486,25 @@ function App() {
               SaveImageToFile(lightboxImage);
             }}>Save</button>
             <button onClick={() => setLightboxImage(null)}>Close</button>
+          </div>
+        </div>
+      )}
+      {expandedReport && (
+        <div className="report-overlay" onClick={() => setExpandedReport(null)}>
+          <div className="report-fullscreen" onClick={e => e.stopPropagation()}>
+            <div className="report-fullscreen-header">
+              <span className="report-title">{expandedReport.title}</span>
+              <div className="report-actions">
+                <button onClick={() => { navigator.clipboard.writeText(expandedReport.content); }}>Copy</button>
+                <button onClick={() => { SaveReport(expandedReport.content, expandedReport.filename); }}>Save</button>
+                <button onClick={() => setExpandedReport(null)}>Close</button>
+              </div>
+            </div>
+            <div className="report-fullscreen-content markdown-body">
+              <ReactMarkdown remarkPlugins={[remarkGfm, remarkBreaks]} rehypePlugins={[rehypeHighlight]} components={{img: ({src, alt}) => <img src={src} alt={alt || ''} style={{maxWidth: '100%', borderRadius: '8px', margin: '8px 0'}} />}}>
+                {expandedReport.content}
+              </ReactMarkdown>
+            </div>
           </div>
         </div>
       )}
@@ -884,11 +920,36 @@ function App() {
                   ))}
                 </div>
               )}
-              <div className="message-content markdown-body">
-                <ReactMarkdown remarkPlugins={[remarkGfm, remarkBreaks]} rehypePlugins={[rehypeHighlight]}>
-                  {msg.content}
-                </ReactMarkdown>
-              </div>
+              {msg.report ? (
+                <div className="report-container">
+                  <div className="report-header">
+                    <span className="report-title">{msg.report.title}</span>
+                    <div className="report-actions">
+                      <button onClick={() => setExpandedReport({ title: msg.report!.title, filename: msg.report!.filename, content: msg.content })}>Expand</button>
+                      <button onClick={() => { navigator.clipboard.writeText(msg.report!.content); }}>Copy</button>
+                      <button onClick={() => { SaveReport(msg.report!.content, msg.report!.filename); }}>Save</button>
+                    </div>
+                  </div>
+                  {msg.imageIds && msg.imageIds.length > 0 && (
+                    <div className="report-images">
+                      {msg.imageIds.map((id, j) => (
+                        <img key={j} src={getCachedImage(id)} alt="" className="report-image" onClick={() => setLightboxImage(getCachedImage(id))} />
+                      ))}
+                    </div>
+                  )}
+                  <div className="report-content markdown-body" onClick={() => setExpandedReport({ title: msg.report!.title, filename: msg.report!.filename, content: msg.content })}>
+                    <ReactMarkdown remarkPlugins={[remarkGfm, remarkBreaks]} rehypePlugins={[rehypeHighlight]} components={{img: ({src, alt}) => <img src={src} alt={alt || ''} style={{maxWidth: '100%', borderRadius: '8px', margin: '8px 0'}} />}}>
+                      {msg.content}
+                    </ReactMarkdown>
+                  </div>
+                </div>
+              ) : (
+                <div className="message-content markdown-body">
+                  <ReactMarkdown remarkPlugins={[remarkGfm, remarkBreaks]} rehypePlugins={[rehypeHighlight]} components={{img: ({src, alt}) => <img src={src} alt={alt || ''} style={{maxWidth: '100%', borderRadius: '8px', margin: '8px 0'}} />}}>
+                    {msg.content}
+                  </ReactMarkdown>
+                </div>
+              )}
               <div className="message-footer">
                 <div className="message-footer-left">
                   <button className="message-copy" onClick={(e) => { navigator.clipboard.writeText(msg.content); const b = e.currentTarget; b.classList.add('copied'); setTimeout(() => b.classList.remove('copied'), 1000); }} title="Copy"><span className="copy-icon">{'\u2398'}</span><span className="copy-check">{'\u2713'}</span></button>
@@ -938,7 +999,7 @@ function App() {
                 <span className="message-role">assistant</span>
               </div>
               <div className="message-content markdown-body">
-                <ReactMarkdown remarkPlugins={[remarkGfm, remarkBreaks]} rehypePlugins={[rehypeHighlight]}>
+                <ReactMarkdown remarkPlugins={[remarkGfm, remarkBreaks]} rehypePlugins={[rehypeHighlight]} components={{img: ({src, alt}) => <img src={src} alt={alt || ''} style={{maxWidth: '100%', borderRadius: '8px', margin: '8px 0'}} />}}>
                   {streamContent}
                 </ReactMarkdown>
               </div>

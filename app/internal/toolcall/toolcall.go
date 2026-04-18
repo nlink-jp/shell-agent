@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+
 )
 
 // Category determines MITL behavior.
@@ -90,11 +91,28 @@ func (r *Registry) List() []*ToolScript {
 // DefaultTimeout is the maximum time a tool script can run.
 const DefaultTimeout = 3 * time.Minute
 
-// Execute runs a tool script with JSON input via stdin.
+// ExecuteResult holds the output and any blob references from tool execution.
+type ExecuteResult struct {
+	Output string
+	JobID  string
+	Blobs  []string // blob references (relative paths)
+}
+
+// Execute runs a tool script with JSON input via stdin (legacy, no job).
 func (r *Registry) Execute(name string, argsJSON string) (string, error) {
+	result, err := r.ExecuteWithJob(name, argsJSON, nil)
+	if err != nil {
+		return "", err
+	}
+	return result.Output, nil
+}
+
+// ExecuteWithJob runs a tool script in a job workspace.
+// If jobMgr is nil, runs without a workspace.
+func (r *Registry) ExecuteWithJob(name string, argsJSON string, jobMgr *JobManager) (*ExecuteResult, error) {
 	tool, ok := r.tools[name]
 	if !ok {
-		return "", fmt.Errorf("tool not found: %s", name)
+		return nil, fmt.Errorf("tool not found: %s", name)
 	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), DefaultTimeout)
@@ -103,17 +121,49 @@ func (r *Registry) Execute(name string, argsJSON string) (string, error) {
 	cmd := exec.CommandContext(ctx, tool.Path)
 	cmd.Stdin = strings.NewReader(argsJSON)
 
+	var job *Job
+	if jobMgr != nil {
+		var err error
+		job, err = jobMgr.NewJob()
+		if err != nil {
+			return nil, fmt.Errorf("create job: %w", err)
+		}
+		cmd.Dir = job.WorkDir
+		// Pass job info as environment variables
+		cmd.Env = append(os.Environ(),
+			"SHELL_AGENT_JOB_ID="+job.ID,
+			"SHELL_AGENT_WORK_DIR="+job.WorkDir,
+		)
+	}
+
 	output, err := cmd.Output()
 	if err != nil {
+		if job != nil {
+			_ = os.RemoveAll(job.WorkDir)
+		}
 		if ctx.Err() == context.DeadlineExceeded {
-			return "", fmt.Errorf("tool %s timed out after %v", name, DefaultTimeout)
+			return nil, fmt.Errorf("tool %s timed out after %v", name, DefaultTimeout)
 		}
 		if exitErr, ok := err.(*exec.ExitError); ok {
-			return "", fmt.Errorf("tool %s failed (exit %d): %s", name, exitErr.ExitCode(), string(exitErr.Stderr))
+			return nil, fmt.Errorf("tool %s failed (exit %d): %s", name, exitErr.ExitCode(), string(exitErr.Stderr))
 		}
-		return "", fmt.Errorf("tool %s exec error: %w", name, err)
+		return nil, fmt.Errorf("tool %s exec error: %w", name, err)
 	}
-	return string(output), nil
+
+	result := &ExecuteResult{
+		Output: string(output),
+	}
+
+	// Finalize job: move artifacts to blob storage
+	if job != nil && jobMgr != nil {
+		result.JobID = job.ID
+		blobs, err := jobMgr.Finalize(job)
+		if err == nil {
+			result.Blobs = blobs
+		}
+	}
+
+	return result, nil
 }
 
 // parseToolHeader reads a script file and extracts @tool annotations.

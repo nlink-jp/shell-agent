@@ -1,4 +1,5 @@
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, useCallback } from 'react';
+import ChatInput from './ChatInput';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import rehypeHighlight from 'rehype-highlight';
@@ -17,7 +18,7 @@ interface Message {
   role: string;
   content: string;
   timestamp: string;
-  images?: string[];
+  imageIds?: string[]; // keys into imageCache ref
 }
 
 interface ToolInfo {
@@ -52,6 +53,7 @@ interface ToolCallRequest {
 interface ToolResult {
   name: string;
   result: string;
+  image?: string;
 }
 
 interface PinnedMemory {
@@ -64,7 +66,6 @@ interface PinnedMemory {
 
 function App() {
   const [messages, setMessages] = useState<Message[]>([]);
-  const [input, setInput] = useState('');
   const [streaming, setStreaming] = useState(false);
   const [streamContent, setStreamContent] = useState('');
   const [tools, setTools] = useState<ToolInfo[]>([]);
@@ -74,13 +75,23 @@ function App() {
   const [mitlRequest, setMitlRequest] = useState<ToolCallRequest | null>(null);
   const [executingTool, setExecutingTool] = useState<string | null>(null);
   const [pinnedMemories, setPinnedMemories] = useState<PinnedMemory[]>([]);
-  const [pendingImages, setPendingImages] = useState<string[]>([]);
   const [showSettings, setShowSettings] = useState(false);
   const [settings, setSettings] = useState<any>(null);
   const [lightboxImage, setLightboxImage] = useState<string | null>(null);
   const composingRef = useRef(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
-  const inputRef = useRef<HTMLTextAreaElement>(null);
+  const imageCacheRef = useRef<Record<string, string>>({});
+  let nextImageId = useRef(0);
+
+  function cacheImage(dataURL: string): string {
+    const id = `img-${nextImageId.current++}`;
+    imageCacheRef.current[id] = dataURL;
+    return id;
+  }
+
+  function getCachedImage(id: string): string {
+    return imageCacheRef.current[id] || '';
+  }
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   // Apply theme, restore last session, and fetch location on load
@@ -91,7 +102,7 @@ function App() {
       }
       if (cfg?.startup_mode === 'last' && cfg?.last_session) {
         LoadSession(cfg.last_session).then((msgs) => {
-          if (msgs) setMessages(msgs);
+          if (msgs) setMessages(convertLoadedMessages(msgs));
         }).catch(() => {});
       }
       // Location is fetched by Go backend via CoreLocation helper
@@ -103,8 +114,6 @@ function App() {
     ListSessions().then((s) => setSessions(s || []));
     GetPinnedMemories().then((p) => setPinnedMemories(p || []));
     refreshStatus();
-
-    const statusInterval = setInterval(refreshStatus, 5000);
 
     const offToken = EventsOn('chat:token', (token: string) => {
       setStreamContent(prev => prev + token);
@@ -131,6 +140,7 @@ function App() {
         role: 'tool',
         content: `**${res.name}**\n\n${res.result}`,
         timestamp: now,
+        imageIds: res.image ? [cacheImage(res.image)] : undefined,
       }]);
     });
 
@@ -143,7 +153,6 @@ function App() {
     });
 
     return () => {
-      clearInterval(statusInterval);
       offToken();
       offDone();
       offToolRequest();
@@ -156,77 +165,22 @@ function App() {
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
-  }, [messages, streamContent, mitlRequest]);
+  }, [messages, streamContent]);
 
   function refreshStatus() {
     GetLLMStatus().then(setLLMStatus);
   }
 
-  function fileToDataURL(file: File): Promise<string> {
-    return new Promise((resolve, reject) => {
-      const reader = new FileReader();
-      reader.onload = () => resolve(reader.result as string);
-      reader.onerror = reject;
-      reader.readAsDataURL(file);
-    });
-  }
+  function handleCompositionStart() { composingRef.current = true; }
+  function handleCompositionEnd() { setTimeout(() => { composingRef.current = false; }, 50); }
 
-  async function addImages(files: FileList | File[]) {
-    const newImages: string[] = [];
-    for (const file of Array.from(files)) {
-      if (file.type.startsWith('image/')) {
-        const dataURL = await fileToDataURL(file);
-        newImages.push(dataURL);
-      }
-    }
-    if (newImages.length > 0) {
-      setPendingImages(prev => [...prev, ...newImages]);
-    }
-  }
-
-  function handlePaste(e: React.ClipboardEvent) {
-    const items = e.clipboardData.items;
-    const imageFiles: File[] = [];
-    for (const item of Array.from(items)) {
-      if (item.type.startsWith('image/')) {
-        const file = item.getAsFile();
-        if (file) imageFiles.push(file);
-      }
-    }
-    if (imageFiles.length > 0) {
-      e.preventDefault();
-      addImages(imageFiles);
-    }
-  }
-
-  function handleDrop(e: React.DragEvent) {
-    e.preventDefault();
-    if (e.dataTransfer.files.length > 0) {
-      addImages(e.dataTransfer.files);
-    }
-  }
-
-  function handleDragOver(e: React.DragEvent) {
-    e.preventDefault();
-  }
-
-  function removeImage(index: number) {
-    setPendingImages(prev => prev.filter((_, i) => i !== index));
-  }
-
-  async function handleSend() {
-    const text = input.trim();
-    if ((!text && pendingImages.length === 0) || streaming) return;
-
+  const handleSend = useCallback(async (text: string, images: string[]) => {
     const now = new Date();
     const timestamp = now.toLocaleTimeString('ja-JP', { hour12: false });
 
-    const images = [...pendingImages];
-    // Keep data URLs for immediate display in chat
-    const userMsg: Message = { role: 'user', content: text || '(image)', timestamp, images: images.length > 0 ? images : undefined };
+    const imageIds = images.length > 0 ? images.map(img => cacheImage(img)) : undefined;
+    const userMsg: Message = { role: 'user', content: text || '(image)', timestamp, imageIds };
     setMessages(prev => [...prev, userMsg]);
-    setInput('');
-    setPendingImages([]);
     setStreaming(true);
     setStreamContent('');
 
@@ -252,17 +206,7 @@ function App() {
       setStreaming(false);
       setStreamContent('');
     }
-  }
-
-  function handleCompositionStart() { composingRef.current = true; }
-  function handleCompositionEnd() { setTimeout(() => { composingRef.current = false; }, 50); }
-
-  function handleKeyDown(e: React.KeyboardEvent) {
-    if (e.key === 'Enter' && e.shiftKey && !composingRef.current) {
-      e.preventDefault();
-      handleSend();
-    }
-  }
+  }, []);
 
   function handleMITLApprove() {
     setMitlRequest(null);
@@ -326,10 +270,19 @@ function App() {
     }
   }
 
+  function convertLoadedMessages(msgs: any[]): Message[] {
+    return msgs.map(m => ({
+      role: m.role,
+      content: m.content,
+      timestamp: m.timestamp,
+      imageIds: m.images ? m.images.map((img: string) => cacheImage(img)) : undefined,
+    }));
+  }
+
   async function handleLoadSession(id: string) {
     try {
       const msgs = await LoadSession(id);
-      setMessages(msgs || []);
+      setMessages(convertLoadedMessages(msgs || []));
       refreshStatus();
     } catch (err) {
       console.error('Failed to load session:', err);
@@ -696,10 +649,10 @@ function App() {
                 <span className="message-role">{msg.role}</span>
                 <span className="message-time">{msg.timestamp}</span>
               </div>
-              {msg.images && msg.images.length > 0 && (
+              {msg.imageIds && msg.imageIds.length > 0 && (
                 <div className="message-images">
-                  {msg.images.map((img, j) => (
-                    <img key={j} src={img} alt="" className="message-image" onClick={() => setLightboxImage(img)} />
+                  {msg.imageIds.map((id, j) => (
+                    <img key={j} src={getCachedImage(id)} alt="" className="message-image" onClick={() => setLightboxImage(getCachedImage(id))} />
                   ))}
                 </div>
               )}
@@ -774,46 +727,7 @@ function App() {
 
         )}
         {!showSettings && (
-        <div className="input-area" onDrop={handleDrop} onDragOver={handleDragOver}>
-          {pendingImages.length > 0 && (
-            <div className="pending-images">
-              {pendingImages.map((img, i) => (
-                <div key={i} className="pending-image">
-                  <img src={img} alt="" onClick={() => setLightboxImage(img)} />
-                  <button className="pending-image-remove" onClick={() => removeImage(i)}>&#x2715;</button>
-                </div>
-              ))}
-            </div>
-          )}
-          <div className="input-row">
-            <button className="attach-btn" onClick={() => fileInputRef.current?.click()} disabled={streaming} title="Attach image">
-              &#x1F4CE;
-            </button>
-            <input
-              ref={fileInputRef}
-              type="file"
-              accept="image/*"
-              multiple
-              style={{ display: 'none' }}
-              onChange={e => { if (e.target.files) addImages(e.target.files); e.target.value = ''; }}
-            />
-            <textarea
-              ref={inputRef}
-              value={input}
-              onChange={e => setInput(e.target.value)}
-              onKeyDown={handleKeyDown}
-              onPaste={handlePaste}
-              onCompositionStart={handleCompositionStart}
-              onCompositionEnd={handleCompositionEnd}
-              placeholder="Type a message... (Shift+Enter to send, Enter for newline)"
-              disabled={streaming}
-              rows={3}
-            />
-            <button onClick={handleSend} disabled={streaming || (!input.trim() && pendingImages.length === 0)}>
-              {streaming ? '...' : 'Send'}
-            </button>
-          </div>
-        </div>
+          <ChatInput onSend={handleSend} disabled={streaming} />
         )}
       </div>
     </div>

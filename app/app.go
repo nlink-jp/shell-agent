@@ -2,8 +2,10 @@ package main
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"os"
 	"strings"
 	"sync"
 	"time"
@@ -69,6 +71,7 @@ type App struct {
 	images   *memory.ImageStore
 	pinned   *memory.PinnedStore
 	tools    *toolcall.Registry
+	jobs     *toolcall.JobManager
 	guardians map[string]*mcp.Guardian // name → guardian
 	session  *memory.Session
 
@@ -130,6 +133,12 @@ func (a *App) startup(ctx context.Context) {
 
 	a.tools = toolcall.NewRegistry(config.ExpandPath(cfg.Tools.ScriptDir))
 	_ = a.tools.Scan()
+
+	jobMgr, err := toolcall.NewJobManager(config.ConfigDir() + "/blobs")
+	if err != nil {
+		fmt.Printf("job manager error: %v\n", err)
+	}
+	a.jobs = jobMgr
 
 	// Restore last session or start new
 	if cfg.StartupMode == "last" && cfg.LastSession != "" {
@@ -207,6 +216,10 @@ func (a *App) LoadSession(id string) ([]ChatMessage, error) {
 
 	var msgs []ChatMessage
 	for _, r := range sess.Records {
+		// Hide system messages from UI
+		if r.Role == "system" {
+			continue
+		}
 		msg := ChatMessage{
 			Role:      r.Role,
 			Content:   r.Content,
@@ -294,6 +307,16 @@ func (a *App) sendMessage(content string, images []string) (ChatMessage, error) 
 		}
 	}
 
+	// Remove stale tool instruction messages from previous turns
+	filtered := a.session.Records[:0]
+	for _, r := range a.session.Records {
+		if r.Role == "system" && strings.Contains(r.Content, "tool has been executed") {
+			continue
+		}
+		filtered = append(filtered, r)
+	}
+	a.session.Records = filtered
+
 	a.session.Records = append(a.session.Records, memory.Record{
 		Timestamp: now,
 		Role:      "user",
@@ -329,17 +352,23 @@ func (a *App) sendMessage(content string, images []string) (ChatMessage, error) 
 		choice := resp.Choices[0]
 		assistantMsg := choice.Message
 
-		// Strip thinking tags and leaked timestamps from LLM response
+		// Strip thinking tags, leaked timestamps, and resolve local file paths
 		assistantMsg.Content = strip.ThinkTags(assistantMsg.Content)
 		assistantMsg.Content = stripLeakedTimestamps(assistantMsg.Content)
+		assistantMsg.Content = a.resolveLocalImages(assistantMsg.Content)
 
 		// If no tool calls, this is a final text response
 		if len(assistantMsg.ToolCalls) == 0 {
+			// Skip empty responses
+			content := strings.TrimSpace(assistantMsg.Content)
+			if content == "" {
+				continue
+			}
 			respTime := time.Now()
 			a.session.Records = append(a.session.Records, memory.Record{
 				Timestamp: respTime,
 				Role:      "assistant",
-				Content:   assistantMsg.Content,
+				Content:   content,
 				Tier:      memory.TierHot,
 			})
 			a.session.UpdatedAt = respTime
@@ -356,12 +385,12 @@ func (a *App) sendMessage(content string, images []string) (ChatMessage, error) 
 			a.autoSave()
 
 			// Emit the full response as tokens for the frontend
-			wailsRuntime.EventsEmit(a.ctx, "chat:token", assistantMsg.Content)
+			wailsRuntime.EventsEmit(a.ctx, "chat:token", content)
 			wailsRuntime.EventsEmit(a.ctx, "chat:done", nil)
 
 			return ChatMessage{
 				Role:      "assistant",
-				Content:   assistantMsg.Content,
+				Content:   content,
 				Timestamp: respTime.Format("15:04:05"),
 			}, nil
 		}
@@ -381,25 +410,63 @@ func (a *App) sendMessage(content string, images []string) (ChatMessage, error) 
 				result = fmt.Sprintf("Error: %v", err)
 			}
 
-			wailsRuntime.EventsEmit(a.ctx, "chat:toolresult", map[string]string{
+			// Check if result contains an image — try extracting from JSON, then from blob artifacts
+			imageDataURL := a.extractImageFromResult(result)
+
+			toolResultEvent := map[string]string{
 				"name":   tc.Function.Name,
 				"result": result,
-			})
+			}
+			if imageDataURL != "" {
+				toolResultEvent["image"] = imageDataURL
+			} else if strings.Contains(result, "[Artifacts produced:") {
+				// Extract blob references and find images
+				if idx := strings.Index(result, "[Artifacts produced:"); idx >= 0 {
+					artStr := result[idx:]
+					if end := strings.Index(artStr, "]"); end >= 0 {
+						refs := strings.Fields(artStr[len("[Artifacts produced:"):end])
+						for _, ref := range refs {
+							if a.jobs != nil {
+								blobPath := a.jobs.BlobPath(ref)
+								if du := a.fileToDataURL(blobPath); du != "" {
+									toolResultEvent["image"] = du
+									break
+								}
+							}
+						}
+					}
+				}
+			}
+			wailsRuntime.EventsEmit(a.ctx, "chat:toolresult", toolResultEvent)
 
-			// Add tool result to memory as system message so LLM can see it
+			// Add tool result to memory
 			a.session.Records = append(a.session.Records, memory.Record{
 				Timestamp: time.Now(),
-				Role:      "user",
+				Role:      "tool",
 				Content:   fmt.Sprintf("[Tool executed: %s]\nOutput:\n%s", tc.Function.Name, result),
 				Tier:      memory.TierHot,
 			})
 		}
 
-		// Add instruction to respond based on tool results
+		// Check if any tool failed
+		hasError := false
+		for _, tc := range assistantMsg.ToolCalls {
+			// Look at the latest tool records
+			for _, r := range a.session.Records {
+				if r.Role == "tool" && strings.Contains(r.Content, tc.Function.Name) && strings.Contains(r.Content, "Error") {
+					hasError = true
+				}
+			}
+		}
+
+		instruction := "The tool has been executed successfully. Now respond to the user based on the tool output."
+		if hasError {
+			instruction = "A tool execution failed. You may retry with different parameters or respond to the user explaining the issue."
+		}
 		a.session.Records = append(a.session.Records, memory.Record{
 			Timestamp: time.Now(),
 			Role:      "system",
-			Content:   "The tool has been executed and the result is shown above. Respond to the user based on the tool output. If the tool failed, you may retry or use a different approach.",
+			Content:   instruction,
 			Tier:      memory.TierHot,
 		})
 
@@ -470,7 +537,23 @@ func (a *App) handleToolCall(tc client.ToolCall) (string, error) {
 		}
 	}
 
-	return a.tools.Execute(tc.Function.Name, args)
+	result, err := a.tools.ExecuteWithJob(tc.Function.Name, args, a.jobs)
+	if err != nil {
+		return "", err
+	}
+
+	output := result.Output
+
+	// If blobs were produced, append blob info to output
+	if len(result.Blobs) > 0 {
+		output += "\n[Artifacts produced:"
+		for _, b := range result.Blobs {
+			output += " " + b
+		}
+		output += "]"
+	}
+
+	return output, nil
 }
 
 // ApproveMITL is called from the frontend when user approves a tool call.
@@ -606,6 +689,15 @@ func (a *App) UpdateLocation(lat, lon float64, locality, adminArea, country stri
 		Country:   country,
 	}
 	_ = a.cfg.Save()
+}
+
+// GetBlobDataURL returns a base64 data URL for a blob reference.
+func (a *App) GetBlobDataURL(blobRef string) string {
+	if a.jobs == nil {
+		return ""
+	}
+	path := a.jobs.BlobPath(blobRef)
+	return a.fileToDataURL(path)
 }
 
 // GetConfig returns the current config for the settings UI.
@@ -815,6 +907,93 @@ func stripLeakedTimestamps(s string) string {
 	return s
 }
 
+// resolveLocalImages finds local image file references in LLM text and converts to data URLs.
+// Handles markdown ![](path), bare filenames like "image.png", and path references.
+func (a *App) resolveLocalImages(text string) string {
+	lines := strings.Split(text, "\n")
+	for i, line := range lines {
+		// Remove markdown image references to local files (image already shown in tool result)
+		if idx := strings.Index(line, "!["); idx >= 0 {
+			if pStart := strings.Index(line[idx:], "]("); pStart >= 0 {
+				pStart += idx + 2
+				if pEnd := strings.Index(line[pStart:], ")"); pEnd >= 0 {
+					path := line[pStart : pStart+pEnd]
+					if !strings.HasPrefix(path, "http") && (isImageFilename(path) || strings.HasPrefix(path, "/")) {
+						lines[i] = line[:idx] + line[pStart+pEnd+1:]
+						continue
+					}
+				}
+			}
+		}
+		// Remove bare image filename references (image already shown in tool result)
+		trimmed := strings.TrimSpace(line)
+		if isImageFilename(trimmed) {
+			lines[i] = ""
+		}
+	}
+	return strings.Join(lines, "\n")
+}
+
+func isImageFilename(s string) bool {
+	if s == "" || strings.Contains(s, " ") {
+		return false
+	}
+	lower := strings.ToLower(s)
+	return strings.HasSuffix(lower, ".png") ||
+		strings.HasSuffix(lower, ".jpg") ||
+		strings.HasSuffix(lower, ".jpeg") ||
+		strings.HasSuffix(lower, ".gif") ||
+		strings.HasSuffix(lower, ".webp")
+}
+
+func (a *App) fileToDataURL(path string) string {
+	// Try the path as-is first, then check common directories
+	candidates := []string{path}
+	if !strings.HasPrefix(path, "/") {
+		candidates = append(candidates,
+			"/tmp/shell-agent-images/"+path,
+			config.ConfigDir()+"/images/"+path,
+		)
+		// Also check blob directories
+		if a.jobs != nil {
+			blobDir := config.ConfigDir() + "/blobs"
+			entries, _ := os.ReadDir(blobDir)
+			for _, e := range entries {
+				if e.IsDir() {
+					candidates = append(candidates, blobDir+"/"+e.Name()+"/"+path)
+				}
+			}
+		}
+	}
+
+	var resolvedPath string
+	for _, p := range candidates {
+		if _, err := os.Stat(p); err == nil {
+			resolvedPath = p
+			break
+		}
+	}
+	if resolvedPath == "" {
+		return ""
+	}
+
+	data, err := os.ReadFile(resolvedPath)
+	if err != nil {
+		return ""
+	}
+	mime := "image/png"
+	lower := strings.ToLower(path)
+	switch {
+	case strings.HasSuffix(lower, ".jpg"), strings.HasSuffix(lower, ".jpeg"):
+		mime = "image/jpeg"
+	case strings.HasSuffix(lower, ".gif"):
+		mime = "image/gif"
+	case strings.HasSuffix(lower, ".webp"):
+		mime = "image/webp"
+	}
+	return fmt.Sprintf("data:%s;base64,%s", mime, base64Encode(data))
+}
+
 func splitLines(s string) []string {
 	var lines []string
 	for _, line := range strings.Split(s, "\n") {
@@ -832,6 +1011,49 @@ func splitFirst(s, sep string) []string {
 		return []string{s}
 	}
 	return []string{strings.TrimSpace(s[:i]), strings.TrimSpace(s[i+len(sep):])}
+}
+
+// extractImageFromResult checks if a tool result JSON contains an image file path
+// and converts it to a data URL for frontend display.
+func (a *App) extractImageFromResult(result string) string {
+	var parsed map[string]any
+	if err := json.Unmarshal([]byte(result), &parsed); err != nil {
+		return ""
+	}
+
+	path, _ := parsed["path"].(string)
+	filename, _ := parsed["filename"].(string)
+	if path == "" && filename == "" {
+		return ""
+	}
+	if path == "" {
+		path = filename
+	}
+
+	// Check if file exists and is an image
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return ""
+	}
+
+	// Determine mime type from extension
+	mime := "image/png"
+	lower := strings.ToLower(path)
+	switch {
+	case strings.HasSuffix(lower, ".jpg"), strings.HasSuffix(lower, ".jpeg"):
+		mime = "image/jpeg"
+	case strings.HasSuffix(lower, ".gif"):
+		mime = "image/gif"
+	case strings.HasSuffix(lower, ".webp"):
+		mime = "image/webp"
+	}
+
+	encoded := base64Encode(data)
+	return fmt.Sprintf("data:%s;base64,%s", mime, encoded)
+}
+
+func base64Encode(data []byte) string {
+	return base64.StdEncoding.EncodeToString(data)
 }
 
 func (a *App) autoSave() {
@@ -881,10 +1103,15 @@ func (a *App) buildMessages(systemPrompt string) []client.Message {
 		case memory.TierHot:
 			content := fmt.Sprintf("[%s] %s", r.Timestamp.Format("15:04:05"), r.Content)
 			// Wrap user and tool output with guard tag for injection defense
-			if r.Role == "user" {
+			if r.Role == "user" || r.Role == "tool" {
 				if wrapped, err := a.guardTag.Wrap(content); err == nil {
 					content = wrapped
 				}
+			}
+			// Send tool results as "user" role so LLM can see them
+			role := r.Role
+			if role == "tool" {
+				role = "user"
 			}
 			// Include images: only the most recent image as actual data,
 			// older images as text descriptions to avoid VLM confusion
@@ -897,24 +1124,39 @@ func (a *App) buildMessages(systemPrompt string) []client.Message {
 						labels = append(labels, fmt.Sprintf("[Image attached at %s, ID: %s]", r.Timestamp.Format("15:04:05"), img.ID))
 					}
 				}
-				messages = append(messages, client.ImageMessage(r.Role, content, dataURLs, labels))
+				messages = append(messages, client.ImageMessage(role, content, dataURLs, labels))
 			} else if len(r.Images) > 0 {
 				// Older images: text reference only
 				for _, img := range r.Images {
 					content += fmt.Sprintf("\n[Past image ID: %s, attached at %s — use view-image tool to see it again]",
 						img.ID, r.Timestamp.Format("15:04:05"))
 				}
-				messages = append(messages, client.TextMessage(r.Role, content))
+				messages = append(messages, client.TextMessage(role, content))
+			} else if strings.Contains(r.Content, "__IMAGE_RECALL_BLOB__") && a.jobs != nil {
+				// Expand blob image recall
+				blobRef := r.Content
+				if idx := strings.Index(blobRef, "__IMAGE_RECALL_BLOB__"); idx >= 0 {
+					rest := blobRef[idx+len("__IMAGE_RECALL_BLOB__"):]
+					if end := strings.Index(rest, "__"); end >= 0 {
+						ref := rest[:end]
+						blobPath := a.jobs.BlobPath(ref)
+						if du := a.fileToDataURL(blobPath); du != "" {
+							messages = append(messages, client.ImageMessage(role, content, []string{du}, []string{"[Recalled generated image]"}))
+						} else {
+							messages = append(messages, client.TextMessage(role, content))
+						}
+					}
+				}
 			} else if strings.Contains(r.Content, "__IMAGE_RECALL__") && a.images != nil {
 				// Expand image recall markers from view-image tool
 				dataURL, label := a.expandImageRecall(r.Content)
 				if dataURL != "" {
-					messages = append(messages, client.ImageMessage(r.Role, content, []string{dataURL}, []string{label}))
+					messages = append(messages, client.ImageMessage(role, content, []string{dataURL}, []string{label}))
 				} else {
-					messages = append(messages, client.TextMessage(r.Role, content))
+					messages = append(messages, client.TextMessage(role, content))
 				}
 			} else {
-				messages = append(messages, client.TextMessage(r.Role, content))
+				messages = append(messages, client.TextMessage(role, content))
 			}
 		}
 	}
@@ -1010,11 +1252,30 @@ func (a *App) viewImageTool(argsJSON string) string {
 	for _, r := range a.session.Records {
 		for _, img := range r.Images {
 			if img.ID == args.ImageID {
-				// Return a marker that buildMessages will replace with actual image data
 				return fmt.Sprintf("__IMAGE_RECALL__%s__%s__", img.ID, img.MimeType)
 			}
 		}
 	}
+
+	// Also check blob storage
+	if a.jobs != nil {
+		blobPath := a.jobs.BlobPath(args.ImageID)
+		if _, err := os.Stat(blobPath); err == nil {
+			return fmt.Sprintf("__IMAGE_RECALL_BLOB__%s__", args.ImageID)
+		}
+		// Try searching all jobs for the filename
+		blobDir := config.ConfigDir() + "/blobs"
+		entries, _ := os.ReadDir(blobDir)
+		for _, e := range entries {
+			if e.IsDir() {
+				candidatePath := blobDir + "/" + e.Name() + "/" + args.ImageID
+				if _, err := os.Stat(candidatePath); err == nil {
+					return fmt.Sprintf("__IMAGE_RECALL_BLOB__%s/%s__", e.Name(), args.ImageID)
+				}
+			}
+		}
+	}
+
 	return "Error: image not found"
 }
 

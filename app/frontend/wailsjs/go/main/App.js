@@ -14,6 +14,10 @@ export function DeleteSession(arg1) {
   return window['go']['main']['App']['DeleteSession'](arg1);
 }
 
+export function GetBlobDataURL(arg1) {
+  return window['go']['main']['App']['GetBlobDataURL'](arg1);
+}
+
 export function GetConfig() {
   return window['go']['main']['App']['GetConfig']();
 }

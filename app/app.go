@@ -434,24 +434,6 @@ func (a *App) sendMessage(content string, images []string) (ChatMessage, error) 
 				continue
 			}
 
-			// Detect "I will do it" responses that should have been tool calls
-			if toolCallCount < maxToolRounds && looksLikePromisedAction(content) {
-				// Add the text as context and retry with tools
-				a.session.Records = append(a.session.Records, memory.Record{
-					Timestamp: time.Now(),
-					Role:      "assistant",
-					Content:   content,
-					Tier:      memory.TierHot,
-				})
-				a.session.Records = append(a.session.Records, memory.Record{
-					Timestamp: time.Now(),
-					Role:      "system",
-					Content:   "You just said you would take an action but did not call the tool. Call the appropriate tool NOW.",
-					Tier:      memory.TierHot,
-				})
-				toolCallCount++
-				continue
-			}
 			respTime := time.Now()
 			a.session.Records = append(a.session.Records, memory.Record{
 				Timestamp: respTime,
@@ -1188,24 +1170,6 @@ func (a *App) fileToDataURL(path string) string {
 		mime = "image/webp"
 	}
 	return fmt.Sprintf("data:%s;base64,%s", mime, base64Encode(data))
-}
-
-// looksLikePromisedAction detects responses where the LLM says it will do something
-// but didn't actually call a tool.
-func looksLikePromisedAction(s string) bool {
-	lower := strings.ToLower(s)
-	promisePatterns := []string{
-		"すぐに作成", "作成します", "生成します", "実行します",
-		"お待ちください", "少々お待ち", "作り直し",
-		"描き直し", "修正します", "変更します", "再度生成",
-		"i'll ", "i will ", "let me ", "creating now",
-	}
-	for _, p := range promisePatterns {
-		if strings.Contains(lower, p) {
-			return true
-		}
-	}
-	return false
 }
 
 // stripFakeToolCalls removes JSON blocks that look like LLM-fabricated tool calls.

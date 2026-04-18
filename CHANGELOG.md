@@ -2,6 +2,35 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.7.0] - 2026-04-19
+
+### Added
+- Data analysis engine with embedded DuckDB (`internal/analysis`)
+- Load CSV, JSON, JSONL files into analysis tables (`load-data` tool)
+- Direct SQL query execution on loaded data (`query-sql` tool)
+- Natural language to SQL generation via LLM (`query-preview` tool)
+- Table/column description annotation for LLM context (`describe-data` tool)
+- LLM-based analysis perspective suggestion (`suggest-analysis` tool)
+- Quick summary of query results via LLM (`quick-summary` tool)
+- Sliding window summarization engine for large dataset analysis
+- Background analysis via detached process — survives app shutdown (`analyze-bg` tool)
+- Background job status tracking with `status.json` (`analysis-status` tool)
+- Background job report retrieval (`analysis-result` tool)
+- Analysis database reset (`reset-analysis` tool)
+- `analyze` subcommand for background analysis mode (single binary, no separate build)
+- Prompt injection defense (nlk/guard) in SQL generation and window analysis prompts
+- Token estimation with dual word/char-based strategy (CJK aware)
+- Finding severity classification and priority-based eviction
+- Markdown report generation from analysis results (severity-grouped findings)
+- DB copy for background jobs to avoid DuckDB file-level locking conflicts
+
+### Changed
+- Makefile: added `-tags no_duckdb_arrow` (Arrow interface unused, database/sql only)
+- Binary size increased (~40MB) due to embedded DuckDB
+
+### Dependencies
+- Added `github.com/marcboeker/go-duckdb` v1.8.5 (CGO, embedded DuckDB)
+
 ## [0.6.0] - 2026-04-19
 
 ### Added

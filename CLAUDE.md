@@ -16,6 +16,7 @@ macOS local LLM chat & agent tool. Wails v2 (Go + React) main app + SwiftUI laun
 - **react.go** — Agent loop, gemma tag parser, debug logging
 - **internal/objstore/** — Central object repository (all binary data)
 - **internal/memory/** — Hot/Warm/Cold tiers, pinned memory, sessions
+- **internal/analysis/** — DuckDB engine, SQL prompts, sliding window summarizer, background CLI
 - **internal/toolcall/** — Tool registry, job workspace, artifacts
 - **internal/client/** — OpenAI-compatible API client
 - **internal/mcp/** — mcp-guardian stdio

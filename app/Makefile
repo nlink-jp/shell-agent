@@ -4,7 +4,7 @@ LDFLAGS := -X 'main.version=$(VERSION)'
 .PHONY: build build-all dev test clean
 
 build:
-	wails build -ldflags "$(LDFLAGS)"
+	wails build -ldflags "$(LDFLAGS)" -tags no_duckdb_arrow
 	mkdir -p dist
 	cp -r build/bin/shell-agent.app dist/
 

@@ -14,6 +14,8 @@ Key capabilities:
 - Multimodal image support with smart recall
 - Report generation with image gallery
 - Central object repository for all binary data
+- Data analysis with embedded DuckDB (CSV/JSON/JSONL, natural language queries, sliding window summarization)
+- Background analysis via detached process (survives app shutdown)
 - nlk security integration (guard, jsonfix, strip)
 
 ## Build Commands
@@ -39,6 +41,7 @@ shell-agent/
 │   │   ├── mcp/                  # mcp-guardian stdio (JSON-RPC 2.0)
 │   │   ├── memory/               # Hot/Warm/Cold, pinned, session store
 │   │   ├── objstore/             # Central object repository ★
+│   │   ├── analysis/            # DuckDB analysis engine, summarizer, prompts ★
 │   │   └── toolcall/             # Tool registry, job workspace
 │   ├── frontend/src/
 │   │   ├── App.tsx / App.css     # Main UI + styles
@@ -108,6 +111,33 @@ Hot messages (user/assistant/tool/report, timestamped)
 
 `github.com/nlink-jp/shell-agent`
 
+## Analysis Architecture
+
+Two-layer design: interactive (in-process) + background (detached process).
+
+```
+Interactive (shell-agent):
+  load-data → DuckDB (embedded) → query-preview / query-sql → quick-summary
+
+Background (shell-agent analyze):
+  Detached process with copied DB → sliding window analysis → report.md
+  Survives shell-agent shutdown. Status tracked via status.json.
+```
+
+Analysis tools: `load-data`, `describe-data`, `query-preview`, `query-sql`,
+`suggest-analysis`, `quick-summary`, `analyze-bg`, `analysis-status`,
+`analysis-result`, `reset-analysis`
+
+### Data Locations (Analysis)
+
+| Path | Content |
+|------|---------|
+| `analysis/analysis.duckdb` | Persistent analysis database |
+| `analysis/job-*/status.json` | Background job status |
+| `analysis/job-*/report.md` | Generated analysis report |
+| `analysis/job-*/findings.json` | Accumulated findings |
+| `analysis/job-*/analysis.duckdb` | Copied DB for background job |
+
 ## Gotchas
 
 - nlk via local `replace` in go.mod
@@ -117,3 +147,6 @@ Hot messages (user/assistant/tool/report, timestamped)
 - Image data in ref cache (not React state) for performance
 - Reports: images as gallery, not inline in markdown
 - Old ImageStore/blob paths may exist in legacy sessions
+- DuckDB requires CGO; Wails build uses `-tags no_duckdb_arrow`
+- Background analysis copies DB to avoid file-level locking conflict
+- Binary size ~40MB due to embedded DuckDB

@@ -15,6 +15,7 @@ import (
 
 	"github.com/nlink-jp/nlk/guard"
 	"github.com/nlink-jp/nlk/jsonfix"
+	"github.com/nlink-jp/shell-agent/internal/analysis"
 	"github.com/nlink-jp/shell-agent/internal/client"
 	"github.com/nlink-jp/shell-agent/internal/config"
 	"github.com/nlink-jp/shell-agent/internal/mcp"
@@ -96,6 +97,10 @@ type App struct {
 	session    *memory.Session
 	tokenStats TokenStats
 
+	// Analysis engine (DuckDB)
+	analysis      *analysis.Engine
+	analysisDir   string // directory for analysis results
+
 	// Security: nonce tag for prompt injection defense (rotated per turn)
 	guardTag guard.Tag
 
@@ -172,6 +177,15 @@ func (a *App) startup(ctx context.Context) {
 		a.NewSession()
 	}
 
+	// Initialize analysis engine (in-memory DuckDB)
+	a.analysisDir = filepath.Join(config.ConfigDir(), "analysis")
+	dbPath := filepath.Join(a.analysisDir, "analysis.duckdb")
+	if eng, err := analysis.NewEngine(dbPath); err == nil {
+		a.analysis = eng
+	} else {
+		fmt.Printf("analysis engine error: %v\n", err)
+	}
+
 	// Start mcp-guardian instances
 	a.guardians = make(map[string]*mcp.Guardian)
 	a.restartGuardians()
@@ -179,6 +193,9 @@ func (a *App) startup(ctx context.Context) {
 
 // shutdown is called when the app is closing.
 func (a *App) shutdown(_ context.Context) {
+	if a.analysis != nil {
+		_ = a.analysis.Close()
+	}
 	for _, g := range a.guardians {
 		_ = g.Stop()
 	}
@@ -1307,6 +1324,26 @@ func (a *App) handleBuiltinTool(name, args string) (string, bool) {
 		return a.viewImageTool(args), true
 	case "create-report":
 		return a.createReportTool(args), true
+	case "load-data":
+		return a.loadDataTool(args), true
+	case "describe-data":
+		return a.describeDataTool(args), true
+	case "query-preview":
+		return a.queryPreviewTool(args), true
+	case "query-sql":
+		return a.querySQLTool(args), true
+	case "suggest-analysis":
+		return a.suggestAnalysisTool(), true
+	case "quick-summary":
+		return a.quickSummaryTool(args), true
+	case "analyze-bg":
+		return a.analyzeBgTool(args), true
+	case "analysis-status":
+		return a.analysisStatusTool(args), true
+	case "analysis-result":
+		return a.analysisResultTool(args), true
+	case "reset-analysis":
+		return a.resetAnalysisTool(), true
 	default:
 		return "", false
 	}
@@ -1693,5 +1730,648 @@ func (a *App) buildToolDefs() []client.Tool {
 			},
 		})
 	}
+	// Add analysis tools (skip disabled)
+	for _, t := range a.analysisTools() {
+		if !a.isToolDisabled(t.Function.Name) {
+			tools = append(tools, t)
+		}
+	}
 	return tools
+}
+
+// --- Analysis tool handlers ---
+
+func (a *App) loadDataTool(argsJSON string) string {
+	if a.analysis == nil {
+		return "Error: analysis engine not available"
+	}
+	var args struct {
+		FilePath  string `json:"file_path"`
+		TableName string `json:"table_name"`
+	}
+	if err := json.Unmarshal([]byte(argsJSON), &args); err != nil {
+		return "Error: invalid arguments — need file_path and table_name"
+	}
+	if args.FilePath == "" {
+		return "Error: file_path is required"
+	}
+	if args.TableName == "" {
+		args.TableName = sanitizeTableName(filepath.Base(args.FilePath))
+	}
+
+	meta, err := a.analysis.LoadFile(context.Background(), args.FilePath, args.TableName)
+	if err != nil {
+		return fmt.Sprintf("Error loading data: %v", err)
+	}
+
+	var sb strings.Builder
+	fmt.Fprintf(&sb, "Loaded table '%s': %d rows, %d columns\n", meta.Name, meta.RowCount, len(meta.Columns))
+	sb.WriteString("Columns:\n")
+	for _, c := range meta.Columns {
+		fmt.Fprintf(&sb, "  %s (%s)\n", c.Name, c.Type)
+	}
+	if len(meta.SampleData) > 0 {
+		sb.WriteString("Sample data (first row):\n")
+		for k, v := range meta.SampleData[0] {
+			fmt.Fprintf(&sb, "  %s: %v\n", k, v)
+		}
+	}
+	return sb.String()
+}
+
+func (a *App) describeDataTool(argsJSON string) string {
+	if a.analysis == nil {
+		return "Error: analysis engine not available"
+	}
+	var args struct {
+		TableName   string `json:"table_name"`
+		Description string `json:"description"`
+		Columns     map[string]string `json:"columns"`
+	}
+	if err := json.Unmarshal([]byte(argsJSON), &args); err != nil {
+		// No args: show all tables
+		tables := a.analysis.Tables()
+		if len(tables) == 0 {
+			return "No tables loaded. Use load-data to load a file first."
+		}
+		schema, _ := a.analysis.LoadSchema(context.Background())
+		return schema
+	}
+
+	if args.TableName == "" {
+		// Show all tables
+		schema, err := a.analysis.LoadSchema(context.Background())
+		if err != nil {
+			return fmt.Sprintf("Error: %v", err)
+		}
+		if schema == "" {
+			return "No tables loaded."
+		}
+		return schema
+	}
+
+	// Set descriptions if provided
+	if args.Description != "" {
+		a.analysis.SetTableDescription(args.TableName, args.Description)
+	}
+	for colName, colDesc := range args.Columns {
+		a.analysis.SetColumnDescription(args.TableName, colName, colDesc)
+	}
+
+	meta, ok := a.analysis.TableMetaByName(args.TableName)
+	if !ok {
+		return fmt.Sprintf("Table '%s' not found", args.TableName)
+	}
+
+	var sb strings.Builder
+	fmt.Fprintf(&sb, "Table: %s (%d rows)\n", meta.Name, meta.RowCount)
+	if meta.Description != "" {
+		fmt.Fprintf(&sb, "Description: %s\n", meta.Description)
+	}
+	for _, c := range meta.Columns {
+		desc := ""
+		if c.Description != "" {
+			desc = " — " + c.Description
+		}
+		fmt.Fprintf(&sb, "  %s %s%s\n", c.Name, c.Type, desc)
+	}
+	if args.Description != "" || len(args.Columns) > 0 {
+		sb.WriteString("\nDescriptions updated.")
+	}
+	return sb.String()
+}
+
+func (a *App) queryPreviewTool(argsJSON string) string {
+	if a.analysis == nil {
+		return "Error: analysis engine not available"
+	}
+	var args struct {
+		Question string `json:"question"`
+		Limit    int    `json:"limit"`
+	}
+	if err := json.Unmarshal([]byte(argsJSON), &args); err != nil {
+		return "Error: invalid arguments — need question"
+	}
+	if args.Question == "" {
+		return "Error: question is required"
+	}
+	if args.Limit <= 0 {
+		args.Limit = 20
+	}
+
+	// Generate SQL from natural language
+	schema, _ := a.analysis.LoadSchema(context.Background())
+	builder := analysis.NewPromptBuilder(schema)
+	adapter := analysis.NewClientAdapter(a.llm)
+
+	sys, user, err := builder.SQLGenerationPrompt(args.Question)
+	if err != nil {
+		return fmt.Sprintf("Error building prompt: %v", err)
+	}
+
+	sqlStr, err := adapter.Chat(context.Background(), sys, user)
+	if err != nil {
+		return fmt.Sprintf("Error generating SQL: %v", err)
+	}
+	sqlStr = analysis.CleanSQL(sqlStr)
+
+	// Add LIMIT if not present
+	if !strings.Contains(strings.ToUpper(sqlStr), "LIMIT") {
+		sqlStr = fmt.Sprintf("%s LIMIT %d", sqlStr, args.Limit)
+	}
+
+	// Validate with dry run
+	if err := a.analysis.DryRun(context.Background(), sqlStr); err != nil {
+		return fmt.Sprintf("Generated SQL has error: %v\nSQL: %s", err, sqlStr)
+	}
+
+	// Execute
+	result, err := a.analysis.Execute(context.Background(), sqlStr)
+	if err != nil {
+		return fmt.Sprintf("Error executing: %v", err)
+	}
+	if result.Error != "" {
+		return fmt.Sprintf("Query error: %s\nSQL: %s", result.Error, sqlStr)
+	}
+
+	return fmt.Sprintf("SQL: %s\n\n%s", sqlStr, analysis.FormatResultSummary(result))
+}
+
+func (a *App) querySQLTool(argsJSON string) string {
+	if a.analysis == nil {
+		return "Error: analysis engine not available"
+	}
+	var args struct {
+		SQL string `json:"sql"`
+	}
+	if err := json.Unmarshal([]byte(argsJSON), &args); err != nil {
+		return "Error: invalid arguments — need sql"
+	}
+	if args.SQL == "" {
+		return "Error: sql is required"
+	}
+
+	result, err := a.analysis.Execute(context.Background(), args.SQL)
+	if err != nil {
+		return fmt.Sprintf("Error: %v", err)
+	}
+	if result.Error != "" {
+		return fmt.Sprintf("Query error: %s", result.Error)
+	}
+
+	return analysis.FormatResultSummary(result)
+}
+
+func (a *App) suggestAnalysisTool() string {
+	if a.analysis == nil {
+		return "Error: analysis engine not available"
+	}
+	tables := a.analysis.Tables()
+	if len(tables) == 0 {
+		return "No tables loaded. Use load-data first."
+	}
+
+	schema, _ := a.analysis.LoadSchema(context.Background())
+	builder := analysis.NewPromptBuilder(schema)
+	adapter := analysis.NewClientAdapter(a.llm)
+
+	sys, user := builder.SuggestAnalysisPrompt(tables)
+	result, err := adapter.Chat(context.Background(), sys, user)
+	if err != nil {
+		return fmt.Sprintf("Error: %v", err)
+	}
+	return result
+}
+
+func (a *App) quickSummaryTool(argsJSON string) string {
+	if a.analysis == nil {
+		return "Error: analysis engine not available"
+	}
+	var args struct {
+		SQL      string `json:"sql"`
+		Question string `json:"question"`
+	}
+	if err := json.Unmarshal([]byte(argsJSON), &args); err != nil {
+		return "Error: invalid arguments"
+	}
+
+	var sqlStr string
+	if args.SQL != "" {
+		sqlStr = args.SQL
+	} else if args.Question != "" {
+		// Generate SQL from question
+		schema, _ := a.analysis.LoadSchema(context.Background())
+		builder := analysis.NewPromptBuilder(schema)
+		adapter := analysis.NewClientAdapter(a.llm)
+
+		sys, user, err := builder.SQLGenerationPrompt(args.Question)
+		if err != nil {
+			return fmt.Sprintf("Error: %v", err)
+		}
+		resp, err := adapter.Chat(context.Background(), sys, user)
+		if err != nil {
+			return fmt.Sprintf("Error: %v", err)
+		}
+		sqlStr = analysis.CleanSQL(resp)
+	} else {
+		return "Error: need sql or question"
+	}
+
+	result, err := a.analysis.Execute(context.Background(), sqlStr)
+	if err != nil {
+		return fmt.Sprintf("Error: %v", err)
+	}
+	if result.Error != "" {
+		return fmt.Sprintf("Query error: %s", result.Error)
+	}
+
+	// Summarize with LLM
+	schema, _ := a.analysis.LoadSchema(context.Background())
+	builder := analysis.NewPromptBuilder(schema)
+	adapter := analysis.NewClientAdapter(a.llm)
+	summarizer := analysis.NewSummarizer(adapter, builder, analysis.DefaultSummarizerConfig())
+
+	summary, err := summarizer.SummarizeResult(context.Background(), result)
+	if err != nil {
+		return fmt.Sprintf("SQL: %s\n\n%s\n\n(Summary failed: %v)", sqlStr, analysis.FormatResultSummary(result), err)
+	}
+
+	return fmt.Sprintf("SQL: %s\nRows: %d\n\nSummary:\n%s", sqlStr, result.RowCount, summary)
+}
+
+func (a *App) analyzeBgTool(argsJSON string) string {
+	if a.analysis == nil {
+		return "Error: analysis engine not available"
+	}
+	var args struct {
+		Prompt string `json:"prompt"`
+		Table  string `json:"table"`
+	}
+	if err := json.Unmarshal([]byte(argsJSON), &args); err != nil {
+		return "Error: invalid arguments — need prompt"
+	}
+	if args.Prompt == "" {
+		return "Error: prompt is required"
+	}
+
+	// Create job output directory
+	jobID := fmt.Sprintf("job-%d", time.Now().UnixMilli())
+	outputDir := filepath.Join(a.analysisDir, jobID)
+	if err := os.MkdirAll(outputDir, 0o755); err != nil {
+		return fmt.Sprintf("Error creating output dir: %v", err)
+	}
+
+	// Copy DuckDB to job directory to avoid file-level locking conflict.
+	// DuckDB allows only one writer per file; the main app holds the original open.
+	jobDBPath := filepath.Join(outputDir, "analysis.duckdb")
+	if err := copyFile(a.analysis.DBPath(), jobDBPath); err != nil {
+		return fmt.Sprintf("Error copying database: %v", err)
+	}
+
+	// Get the path to our own executable
+	selfPath, err := os.Executable()
+	if err != nil {
+		return fmt.Sprintf("Error: cannot find executable: %v", err)
+	}
+
+	// Spawn detached analysis process with the copied DB
+	cmdArgs := []string{
+		"analyze",
+		"--db", jobDBPath,
+		"--api", a.cfg.API.Endpoint,
+		"--model", a.cfg.API.Model,
+		"--prompt", args.Prompt,
+		"--output", outputDir,
+	}
+	if args.Table != "" {
+		cmdArgs = append(cmdArgs, "--table", args.Table)
+	}
+	if a.cfg.API.APIKey != "" {
+		cmdArgs = append(cmdArgs, "--api-key", a.cfg.API.APIKey)
+	}
+
+	cmd := exec.Command(selfPath, cmdArgs...)
+	cmd.SysProcAttr = detachedProcAttr()
+	if err := cmd.Start(); err != nil {
+		return fmt.Sprintf("Error starting background analysis: %v", err)
+	}
+
+	return fmt.Sprintf("Background analysis started.\nJob ID: %s\nUse analysis-status to check progress.", jobID)
+}
+
+func (a *App) analysisStatusTool(argsJSON string) string {
+	var args struct {
+		JobID string `json:"job_id"`
+	}
+	_ = json.Unmarshal([]byte(argsJSON), &args)
+
+	if args.JobID == "" {
+		// List all jobs
+		entries, err := os.ReadDir(a.analysisDir)
+		if err != nil {
+			return "No analysis jobs found."
+		}
+		var jobs []string
+		for _, e := range entries {
+			if !e.IsDir() || !strings.HasPrefix(e.Name(), "job-") {
+				continue
+			}
+			statusPath := filepath.Join(a.analysisDir, e.Name(), "status.json")
+			data, err := os.ReadFile(statusPath)
+			if err != nil {
+				jobs = append(jobs, fmt.Sprintf("- %s: unknown", e.Name()))
+				continue
+			}
+			var status analysis.JobStatus
+			_ = json.Unmarshal(data, &status)
+			jobs = append(jobs, fmt.Sprintf("- %s: %s (%s)", e.Name(), status.State, status.Progress))
+		}
+		if len(jobs) == 0 {
+			return "No analysis jobs found."
+		}
+		return strings.Join(jobs, "\n")
+	}
+
+	statusPath := filepath.Join(a.analysisDir, args.JobID, "status.json")
+	data, err := os.ReadFile(statusPath)
+	if err != nil {
+		return fmt.Sprintf("Job '%s' not found", args.JobID)
+	}
+	var status analysis.JobStatus
+	_ = json.Unmarshal(data, &status)
+	return fmt.Sprintf("Job: %s\nState: %s\nProgress: %s\nStarted: %s\nUpdated: %s",
+		args.JobID, status.State, status.Progress,
+		status.StartedAt.Format("15:04:05"), status.UpdatedAt.Format("15:04:05"))
+}
+
+func (a *App) analysisResultTool(argsJSON string) string {
+	var args struct {
+		JobID string `json:"job_id"`
+	}
+	if err := json.Unmarshal([]byte(argsJSON), &args); err != nil || args.JobID == "" {
+		return "Error: job_id is required"
+	}
+
+	reportPath := filepath.Join(a.analysisDir, args.JobID, "report.md")
+	data, err := os.ReadFile(reportPath)
+	if err != nil {
+		// Check status
+		statusPath := filepath.Join(a.analysisDir, args.JobID, "status.json")
+		statusData, sErr := os.ReadFile(statusPath)
+		if sErr != nil {
+			return fmt.Sprintf("Job '%s' not found", args.JobID)
+		}
+		var status analysis.JobStatus
+		_ = json.Unmarshal(statusData, &status)
+		if status.State == "running" {
+			return fmt.Sprintf("Job '%s' is still running: %s", args.JobID, status.Progress)
+		}
+		return fmt.Sprintf("Job '%s' has no report. State: %s, Error: %s", args.JobID, status.State, status.Error)
+	}
+
+	// Truncate for context window
+	report := string(data)
+	if len(report) > 10000 {
+		report = report[:10000] + "\n\n... (report truncated, full report at: " + reportPath + ")"
+	}
+	return report
+}
+
+func (a *App) resetAnalysisTool() string {
+	if a.analysis == nil {
+		return "Error: analysis engine not available"
+	}
+	// Close current engine
+	_ = a.analysis.Close()
+
+	// Remove and recreate DB
+	dbPath := filepath.Join(a.analysisDir, "analysis.duckdb")
+	_ = os.Remove(dbPath)
+	// DuckDB may create .wal file
+	_ = os.Remove(dbPath + ".wal")
+
+	eng, err := analysis.NewEngine(dbPath)
+	if err != nil {
+		return fmt.Sprintf("Error reinitializing analysis engine: %v", err)
+	}
+	a.analysis = eng
+	return "Analysis database reset. All tables removed."
+}
+
+// sanitizeTableName creates a valid SQL table name from a filename.
+func sanitizeTableName(filename string) string {
+	name := strings.TrimSuffix(filename, filepath.Ext(filename))
+	name = strings.Map(func(r rune) rune {
+		if (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9') || r == '_' {
+			return r
+		}
+		return '_'
+	}, name)
+	if name == "" {
+		return "data"
+	}
+	// Ensure starts with letter
+	if name[0] >= '0' && name[0] <= '9' {
+		name = "t_" + name
+	}
+	return name
+}
+
+// copyFile copies src to dst. Used to snapshot the analysis DB for background jobs.
+func copyFile(src, dst string) error {
+	data, err := os.ReadFile(src)
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(dst, data, 0o644)
+}
+
+// analysisTools returns tool definitions for data analysis capabilities.
+func (a *App) analysisTools() []client.Tool {
+	return []client.Tool{
+		{
+			Type: "function",
+			Function: client.ToolFunction{
+				Name:        "load-data",
+				Description: "Load a data file (CSV, JSON, JSONL) into the analysis database. Returns table schema and sample data.",
+				Parameters: map[string]any{
+					"type": "object",
+					"properties": map[string]any{
+						"file_path": map[string]any{
+							"type":        "string",
+							"description": "Path to the data file",
+						},
+						"table_name": map[string]any{
+							"type":        "string",
+							"description": "Name for the table (auto-generated from filename if omitted)",
+						},
+					},
+					"required": []string{"file_path"},
+				},
+			},
+		},
+		{
+			Type: "function",
+			Function: client.ToolFunction{
+				Name:        "describe-data",
+				Description: "Show table schemas, or set descriptions for tables and columns. Call with no arguments to see all tables.",
+				Parameters: map[string]any{
+					"type": "object",
+					"properties": map[string]any{
+						"table_name": map[string]any{
+							"type":        "string",
+							"description": "Table name to describe or annotate",
+						},
+						"description": map[string]any{
+							"type":        "string",
+							"description": "Description for the table",
+						},
+						"columns": map[string]any{
+							"type":        "object",
+							"description": "Column descriptions as {column_name: description}",
+						},
+					},
+					"required": []string{},
+				},
+			},
+		},
+		{
+			Type: "function",
+			Function: client.ToolFunction{
+				Name:        "query-preview",
+				Description: "Ask a question about the loaded data in natural language. Generates and executes SQL, returns a preview of results.",
+				Parameters: map[string]any{
+					"type": "object",
+					"properties": map[string]any{
+						"question": map[string]any{
+							"type":        "string",
+							"description": "Natural language question about the data",
+						},
+						"limit": map[string]any{
+							"type":        "integer",
+							"description": "Max rows to return (default 20)",
+						},
+					},
+					"required": []string{"question"},
+				},
+			},
+		},
+		{
+			Type: "function",
+			Function: client.ToolFunction{
+				Name:        "query-sql",
+				Description: "Execute a SQL query directly on the analysis database. Use for precise queries when you know the exact SQL needed.",
+				Parameters: map[string]any{
+					"type": "object",
+					"properties": map[string]any{
+						"sql": map[string]any{
+							"type":        "string",
+							"description": "DuckDB SQL query to execute",
+						},
+					},
+					"required": []string{"sql"},
+				},
+			},
+		},
+		{
+			Type: "function",
+			Function: client.ToolFunction{
+				Name:        "suggest-analysis",
+				Description: "Suggest analysis perspectives based on the loaded data schemas. Use this when the user has loaded data and wants ideas for what to analyze.",
+				Parameters: map[string]any{
+					"type":       "object",
+					"properties": map[string]any{},
+					"required":   []string{},
+				},
+			},
+		},
+		{
+			Type: "function",
+			Function: client.ToolFunction{
+				Name:        "quick-summary",
+				Description: "Query data and generate an LLM summary of the results. For quick insights on small datasets.",
+				Parameters: map[string]any{
+					"type": "object",
+					"properties": map[string]any{
+						"question": map[string]any{
+							"type":        "string",
+							"description": "Natural language question (generates SQL automatically)",
+						},
+						"sql": map[string]any{
+							"type":        "string",
+							"description": "Direct SQL query (use instead of question for precise control)",
+						},
+					},
+					"required": []string{},
+				},
+			},
+		},
+		{
+			Type: "function",
+			Function: client.ToolFunction{
+				Name:        "analyze-bg",
+				Description: "Start a background analysis that runs independently. Use for large datasets or deep analysis that takes time. The analysis continues even if Shell Agent is closed.",
+				Parameters: map[string]any{
+					"type": "object",
+					"properties": map[string]any{
+						"prompt": map[string]any{
+							"type":        "string",
+							"description": "Analysis perspective and what to look for",
+						},
+						"table": map[string]any{
+							"type":        "string",
+							"description": "Table to analyze (default: first table)",
+						},
+					},
+					"required": []string{"prompt"},
+				},
+			},
+		},
+		{
+			Type: "function",
+			Function: client.ToolFunction{
+				Name:        "analysis-status",
+				Description: "Check the status of background analysis jobs. Call with no arguments to list all jobs.",
+				Parameters: map[string]any{
+					"type": "object",
+					"properties": map[string]any{
+						"job_id": map[string]any{
+							"type":        "string",
+							"description": "Job ID to check (omit to list all jobs)",
+						},
+					},
+					"required": []string{},
+				},
+			},
+		},
+		{
+			Type: "function",
+			Function: client.ToolFunction{
+				Name:        "analysis-result",
+				Description: "Retrieve the report from a completed background analysis.",
+				Parameters: map[string]any{
+					"type": "object",
+					"properties": map[string]any{
+						"job_id": map[string]any{
+							"type":        "string",
+							"description": "Job ID of the completed analysis",
+						},
+					},
+					"required": []string{"job_id"},
+				},
+			},
+		},
+		{
+			Type: "function",
+			Function: client.ToolFunction{
+				Name:        "reset-analysis",
+				Description: "Reset the analysis database, removing all loaded tables. Use when starting a fresh analysis.",
+				Parameters: map[string]any{
+					"type":       "object",
+					"properties": map[string]any{},
+					"required":   []string{},
+				},
+			},
+		},
+	}
 }

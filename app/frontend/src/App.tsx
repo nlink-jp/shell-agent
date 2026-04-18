@@ -152,6 +152,10 @@ function App() {
       setPinnedMemories(entries || []);
     });
 
+    const offToolsUpdated = EventsOn('chat:tools_updated', (t: ToolInfo[]) => {
+      setTools(t || []);
+    });
+
     return () => {
       offToken();
       offDone();
@@ -160,6 +164,7 @@ function App() {
       offToolResult();
       offThinking();
       offPinned();
+      offToolsUpdated();
     };
   }, []);
 

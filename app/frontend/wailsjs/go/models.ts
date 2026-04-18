@@ -35,8 +35,9 @@ export namespace config {
 	    }
 	}
 	export class GuardianConfig {
+	    name: string;
 	    binary_path: string;
-	    config_path: string;
+	    profile_path: string;
 	
 	    static createFrom(source: any = {}) {
 	        return new GuardianConfig(source);
@@ -44,8 +45,9 @@ export namespace config {
 	
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.name = source["name"];
 	        this.binary_path = source["binary_path"];
-	        this.config_path = source["config_path"];
+	        this.profile_path = source["profile_path"];
 	    }
 	}
 	export class ToolsConfig {
@@ -80,7 +82,7 @@ export namespace config {
 	    api: APIConfig;
 	    memory: MemoryConfig;
 	    tools: ToolsConfig;
-	    guardian: GuardianConfig;
+	    guardians: GuardianConfig[];
 	    window: WindowConfig;
 	
 	    static createFrom(source: any = {}) {
@@ -92,7 +94,7 @@ export namespace config {
 	        this.api = this.convertValues(source["api"], APIConfig);
 	        this.memory = this.convertValues(source["memory"], MemoryConfig);
 	        this.tools = this.convertValues(source["tools"], ToolsConfig);
-	        this.guardian = this.convertValues(source["guardian"], GuardianConfig);
+	        this.guardians = this.convertValues(source["guardians"], GuardianConfig);
 	        this.window = this.convertValues(source["window"], WindowConfig);
 	    }
 	

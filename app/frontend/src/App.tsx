@@ -8,6 +8,7 @@ import {
   SendMessage, SendMessageWithImages, GetTools, GetLLMStatus, ListSessions,
   NewSession, LoadSession, DeleteSession, RenameSession,
   ApproveMITL, RejectMITL, GetPinnedMemories,
+  GetConfig, SaveConfig,
 } from '../wailsjs/go/main/App';
 import { EventsOn } from '../wailsjs/runtime/runtime';
 
@@ -70,6 +71,8 @@ function App() {
   const [mitlRequest, setMitlRequest] = useState<ToolCallRequest | null>(null);
   const [pinnedMemories, setPinnedMemories] = useState<PinnedMemory[]>([]);
   const [pendingImages, setPendingImages] = useState<string[]>([]);
+  const [showSettings, setShowSettings] = useState(false);
+  const [settings, setSettings] = useState<any>(null);
   const [lightboxImage, setLightboxImage] = useState<string | null>(null);
   const composingRef = useRef(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
@@ -303,6 +306,33 @@ function App() {
     }
   }
 
+  async function openSettings() {
+    try {
+      const cfg = await GetConfig();
+      setSettings(cfg);
+      setShowSettings(true);
+    } catch (err) {
+      console.error('Failed to load config:', err);
+    }
+  }
+
+  async function handleSaveSettings() {
+    if (!settings) return;
+    try {
+      await SaveConfig(JSON.stringify(settings));
+      setShowSettings(false);
+    } catch (err: any) {
+      alert('Failed to save: ' + (err.message || err));
+    }
+  }
+
+  function updateSetting(section: string, key: string, value: any) {
+    setSettings((prev: any) => ({
+      ...prev,
+      [section]: { ...prev[section], [key]: value },
+    }));
+  }
+
   function formatArgs(argsStr: string): string {
     try {
       const obj = JSON.parse(argsStr);
@@ -324,6 +354,7 @@ function App() {
         <div className="sidebar-header">
           <h2>Shell Agent</h2>
           <button className="new-chat-btn" onClick={handleNewSession}>+ New Chat</button>
+          <button className="settings-btn" onClick={openSettings}>Settings</button>
         </div>
 
         <div className="sidebar-tabs">
@@ -437,6 +468,104 @@ function App() {
 
       <div className="main">
         <div className="drag-handle" />
+        {showSettings && settings ? (
+          <div className="settings-panel">
+            <div className="settings-header">
+              <h2>Settings</h2>
+              <button className="settings-close" onClick={() => setShowSettings(false)}>&#x2715;</button>
+            </div>
+            <div className="settings-body">
+              <div className="settings-section">
+                <h3>API</h3>
+                <label>
+                  <span>Endpoint</span>
+                  <input type="text" value={settings.api?.endpoint || ''} onChange={e => updateSetting('api', 'endpoint', e.target.value)} />
+                </label>
+                <label>
+                  <span>Model</span>
+                  <input type="text" value={settings.api?.model || ''} onChange={e => updateSetting('api', 'model', e.target.value)} />
+                </label>
+                <label>
+                  <span>API Key</span>
+                  <input type="password" value={settings.api?.api_key || ''} onChange={e => updateSetting('api', 'api_key', e.target.value)} placeholder="(optional)" />
+                </label>
+              </div>
+
+              <div className="settings-section">
+                <h3>Memory</h3>
+                <label>
+                  <span>Hot Token Limit</span>
+                  <input type="number" value={settings.memory?.hot_token_limit || 4096} onChange={e => updateSetting('memory', 'hot_token_limit', parseInt(e.target.value) || 4096)} />
+                </label>
+                <label>
+                  <span>Warm Retention (min)</span>
+                  <input type="number" value={settings.memory?.warm_retention_mins || 60} onChange={e => updateSetting('memory', 'warm_retention_mins', parseInt(e.target.value) || 60)} />
+                </label>
+                <label>
+                  <span>Cold Retention (min)</span>
+                  <input type="number" value={settings.memory?.cold_retention_mins || 1440} onChange={e => updateSetting('memory', 'cold_retention_mins', parseInt(e.target.value) || 1440)} />
+                </label>
+              </div>
+
+              <div className="settings-section">
+                <h3>Tools</h3>
+                <label>
+                  <span>Script Directory</span>
+                  <input type="text" value={settings.tools?.script_dir || ''} onChange={e => updateSetting('tools', 'script_dir', e.target.value)} />
+                </label>
+              </div>
+
+              <div className="settings-section">
+                <h3>MCP Guardians</h3>
+                {(settings.guardians || []).map((g: any, i: number) => (
+                  <div key={i} className="guardian-entry">
+                    <div className="guardian-header">
+                      <span className="guardian-name">{g.name || `Guardian ${i + 1}`}</span>
+                      <button className="guardian-remove" onClick={() => {
+                        const next = [...(settings.guardians || [])];
+                        next.splice(i, 1);
+                        setSettings((prev: any) => ({ ...prev, guardians: next }));
+                      }}>&#x2715;</button>
+                    </div>
+                    <label>
+                      <span>Name</span>
+                      <input type="text" value={g.name || ''} onChange={e => {
+                        const next = [...(settings.guardians || [])];
+                        next[i] = { ...next[i], name: e.target.value };
+                        setSettings((prev: any) => ({ ...prev, guardians: next }));
+                      }} />
+                    </label>
+                    <label>
+                      <span>Binary Path</span>
+                      <input type="text" value={g.binary_path || ''} onChange={e => {
+                        const next = [...(settings.guardians || [])];
+                        next[i] = { ...next[i], binary_path: e.target.value };
+                        setSettings((prev: any) => ({ ...prev, guardians: next }));
+                      }} />
+                    </label>
+                    <label>
+                      <span>Profile Path</span>
+                      <input type="text" value={g.profile_path || ''} onChange={e => {
+                        const next = [...(settings.guardians || [])];
+                        next[i] = { ...next[i], profile_path: e.target.value };
+                        setSettings((prev: any) => ({ ...prev, guardians: next }));
+                      }} />
+                    </label>
+                  </div>
+                ))}
+                <button className="guardian-add" onClick={() => {
+                  const next = [...(settings.guardians || []), { name: '', binary_path: 'mcp-guardian', profile_path: '' }];
+                  setSettings((prev: any) => ({ ...prev, guardians: next }));
+                }}>+ Add Guardian</button>
+              </div>
+            </div>
+
+            <div className="settings-footer">
+              <button className="settings-save" onClick={handleSaveSettings}>Save</button>
+              <button className="settings-cancel" onClick={() => setShowSettings(false)}>Cancel</button>
+            </div>
+          </div>
+        ) : (
         <div className="messages">
           {messages.map((msg, i) => (
             <div key={i} className={`message ${msg.role}`}>
@@ -511,6 +640,8 @@ function App() {
           <div ref={messagesEndRef} />
         </div>
 
+        )}
+        {!showSettings && (
         <div className="input-area" onDrop={handleDrop} onDragOver={handleDragOver}>
           {pendingImages.length > 0 && (
             <div className="pending-images">
@@ -551,6 +682,7 @@ function App() {
             </button>
           </div>
         </div>
+        )}
       </div>
     </div>
   );

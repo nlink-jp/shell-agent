@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 )
 
 const (
@@ -13,11 +14,11 @@ const (
 
 // Config holds all application settings.
 type Config struct {
-	API      APIConfig      `json:"api"`
-	Memory   MemoryConfig   `json:"memory"`
-	Tools    ToolsConfig    `json:"tools"`
-	Guardian GuardianConfig `json:"guardian"`
-	Window   WindowConfig   `json:"window"`
+	API       APIConfig        `json:"api"`
+	Memory    MemoryConfig     `json:"memory"`
+	Tools     ToolsConfig      `json:"tools"`
+	Guardians []GuardianConfig `json:"guardians"`
+	Window    WindowConfig     `json:"window"`
 }
 
 // WindowConfig holds window position and size.
@@ -47,10 +48,11 @@ type ToolsConfig struct {
 	ScriptDir string `json:"script_dir"`
 }
 
-// GuardianConfig holds mcp-guardian settings.
+// GuardianConfig holds mcp-guardian settings for one MCP server.
 type GuardianConfig struct {
-	BinaryPath string `json:"binary_path"`
-	ConfigPath string `json:"config_path"`
+	Name        string `json:"name"`
+	BinaryPath  string `json:"binary_path"`
+	ProfilePath string `json:"profile_path"`
 }
 
 // DefaultConfig returns sensible defaults.
@@ -68,9 +70,7 @@ func DefaultConfig() *Config {
 		Tools: ToolsConfig{
 			ScriptDir: filepath.Join(ConfigDir(), "tools"),
 		},
-		Guardian: GuardianConfig{
-			BinaryPath: "mcp-guardian",
-		},
+		Guardians: []GuardianConfig{},
 	}
 }
 
@@ -102,6 +102,26 @@ func Load() (*Config, error) {
 		return nil, err
 	}
 	return &cfg, nil
+}
+
+// ExpandPath resolves ~ and environment variables in a path.
+func ExpandPath(path string) string {
+	if path == "" {
+		return path
+	}
+	// Expand environment variables ($HOME, ${VAR}, etc.)
+	path = os.ExpandEnv(path)
+	// Expand ~ to home directory
+	if strings.HasPrefix(path, "~/") {
+		if home, err := os.UserHomeDir(); err == nil {
+			path = filepath.Join(home, path[2:])
+		}
+	} else if path == "~" {
+		if home, err := os.UserHomeDir(); err == nil {
+			path = home
+		}
+	}
+	return path
 }
 
 // Save writes the config to disk.

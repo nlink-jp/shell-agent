@@ -69,7 +69,7 @@ type App struct {
 	images   *memory.ImageStore
 	pinned   *memory.PinnedStore
 	tools    *toolcall.Registry
-	guardian *mcp.Guardian
+	guardians map[string]*mcp.Guardian // name → guardian
 	session  *memory.Session
 
 	// Security: nonce tag for prompt injection defense (rotated per turn)
@@ -128,21 +128,25 @@ func (a *App) startup(ctx context.Context) {
 	}
 	a.pinned = pinned
 
-	a.tools = toolcall.NewRegistry(cfg.Tools.ScriptDir)
+	a.tools = toolcall.NewRegistry(config.ExpandPath(cfg.Tools.ScriptDir))
 	_ = a.tools.Scan()
 
-	// Start mcp-guardian if configured
-	if cfg.Guardian.BinaryPath != "" {
-		args := []string{}
-		if cfg.Guardian.ConfigPath != "" {
-			args = append(args, "--profile", cfg.Guardian.ConfigPath)
+	// Start mcp-guardian instances
+	a.guardians = make(map[string]*mcp.Guardian)
+	for _, gc := range cfg.Guardians {
+		if gc.BinaryPath == "" || gc.Name == "" {
+			continue
 		}
-		g := mcp.NewGuardian(cfg.Guardian.BinaryPath, args...)
+		args := []string{}
+		if gc.ProfilePath != "" {
+			args = append(args, "--profile", config.ExpandPath(gc.ProfilePath))
+		}
+		g := mcp.NewGuardian(config.ExpandPath(gc.BinaryPath), args...)
 		if err := g.Start(); err != nil {
-			fmt.Printf("mcp-guardian start: %v (MCP tools unavailable)\n", err)
+			fmt.Printf("mcp-guardian [%s] start: %v\n", gc.Name, err)
 		} else {
-			a.guardian = g
-			fmt.Printf("mcp-guardian started: %d tools available\n", len(g.Tools()))
+			a.guardians[gc.Name] = g
+			fmt.Printf("mcp-guardian [%s] started: %d tools\n", gc.Name, len(g.Tools()))
 		}
 	}
 
@@ -151,8 +155,8 @@ func (a *App) startup(ctx context.Context) {
 
 // shutdown is called when the app is closing.
 func (a *App) shutdown(_ context.Context) {
-	if a.guardian != nil {
-		_ = a.guardian.Stop()
+	for _, g := range a.guardians {
+		_ = g.Stop()
 	}
 
 	if a.session != nil && a.store != nil {
@@ -412,14 +416,19 @@ func (a *App) handleToolCall(tc client.ToolCall) (string, error) {
 		return result, nil
 	}
 
-	// Check MCP tools (prefixed with "mcp__")
-	if strings.HasPrefix(tc.Function.Name, "mcp__") && a.guardian != nil {
-		mcpName := strings.TrimPrefix(tc.Function.Name, "mcp__")
-		result, err := a.guardian.CallTool(mcpName, json.RawMessage(args))
-		if err != nil {
-			return "", err
+	// Check MCP tools (prefixed with "mcp__<guardian>__")
+	if strings.HasPrefix(tc.Function.Name, "mcp__") {
+		parts := strings.SplitN(strings.TrimPrefix(tc.Function.Name, "mcp__"), "__", 2)
+		if len(parts) == 2 {
+			if g, ok := a.guardians[parts[0]]; ok {
+				result, err := g.CallTool(parts[1], json.RawMessage(args))
+				if err != nil {
+					return "", err
+				}
+				return string(result), nil
+			}
 		}
-		return string(result), nil
+		return "", fmt.Errorf("unknown MCP tool: %s", tc.Function.Name)
 	}
 
 	tool, ok := a.tools.Get(tc.Function.Name)
@@ -466,12 +475,12 @@ func (a *App) RejectMITL() {
 // GetTools returns all registered tools (shell scripts + MCP).
 func (a *App) GetTools() []ToolInfo {
 	var infos []ToolInfo
-	// MCP tools
-	if a.guardian != nil {
-		for _, t := range a.guardian.Tools() {
+	// MCP tools from all guardians
+	for name, g := range a.guardians {
+		for _, t := range g.Tools() {
 			infos = append(infos, ToolInfo{
-				Name:        "mcp__" + t.Name,
-				Description: t.Description,
+				Name:        "mcp__" + name + "__" + t.Name,
+				Description: "[" + name + "] " + t.Description,
 				Category:    "mcp",
 			})
 		}
@@ -553,7 +562,7 @@ func (a *App) SaveConfig(cfgJSON string) error {
 	cfg.Window = a.cfg.Window
 	a.cfg = &cfg
 	a.llm = client.New(cfg.API.Endpoint, cfg.API.Model, cfg.API.APIKey)
-	a.tools = toolcall.NewRegistry(cfg.Tools.ScriptDir)
+	a.tools = toolcall.NewRegistry(config.ExpandPath(cfg.Tools.ScriptDir))
 	_ = a.tools.Scan()
 	return cfg.Save()
 }
@@ -950,14 +959,14 @@ func (a *App) buildToolDefs() []client.Tool {
 	var tools []client.Tool
 	// Add builtin image tools
 	tools = append(tools, a.builtinTools()...)
-	// Add MCP tools from guardian
-	if a.guardian != nil {
-		for _, t := range a.guardian.Tools() {
+	// Add MCP tools from all guardians
+	for name, g := range a.guardians {
+		for _, t := range g.Tools() {
 			tools = append(tools, client.Tool{
 				Type: "function",
 				Function: client.ToolFunction{
-					Name:        "mcp__" + t.Name,
-					Description: t.Description,
+					Name:        "mcp__" + name + "__" + t.Name,
+					Description: "[" + name + "] " + t.Description,
 					Parameters:  t.InputSchema,
 				},
 			})

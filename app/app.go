@@ -19,6 +19,7 @@ import (
 	"github.com/nlink-jp/shell-agent/internal/config"
 	"github.com/nlink-jp/shell-agent/internal/mcp"
 	"github.com/nlink-jp/shell-agent/internal/memory"
+	"github.com/nlink-jp/shell-agent/internal/objstore"
 	"github.com/nlink-jp/shell-agent/internal/toolcall"
 	wailsRuntime "github.com/wailsapp/wails/v2/pkg/runtime"
 )
@@ -87,7 +88,7 @@ type App struct {
 	cfg      *config.Config
 	llm      *client.Client
 	store    *memory.Store
-	images   *memory.ImageStore
+	objects  *objstore.Store
 	pinned   *memory.PinnedStore
 	tools    *toolcall.Registry
 	jobs     *toolcall.JobManager
@@ -142,11 +143,11 @@ func (a *App) startup(ctx context.Context) {
 	}
 	a.store = store
 
-	imgStore, err := memory.NewImageStore(config.ConfigDir() + "/images")
+	objects, err := objstore.New(config.ConfigDir() + "/objects")
 	if err != nil {
-		fmt.Printf("image store error: %v\n", err)
+		fmt.Printf("object store error: %v\n", err)
 	}
-	a.images = imgStore
+	a.objects = objects
 
 	pinned, err := memory.NewPinnedStore(config.ConfigDir() + "/pinned.json")
 	if err != nil {
@@ -336,12 +337,11 @@ func (a *App) sendMessage(content string, images []string) (ChatMessage, error) 
 	// Save images to disk and create references
 	var imageEntries []memory.ImageEntry
 	for _, dataURL := range images {
-		if a.images != nil {
-			id, mime, err := a.images.Save(dataURL)
+		if a.objects != nil {
+			id, err := a.objects.SaveDataURL(dataURL, objstore.TypeImage, "")
 			if err == nil {
 				imageEntries = append(imageEntries, memory.ImageEntry{
-					ID:       id,
-					MimeType: mime,
+					ID: id,
 				})
 			}
 		}
@@ -556,10 +556,10 @@ func (a *App) GetPinnedMemories() []memory.PinnedMemory {
 
 // GetImageDataURL returns a base64 data URL for an image by ID.
 func (a *App) GetImageDataURL(id, mimeType string) string {
-	if a.images == nil {
+	if a.objects == nil {
 		return ""
 	}
-	du, err := a.images.LoadAsDataURL(id, mimeType)
+	du, err := a.objects.LoadAsDataURL(id)
 	if err != nil {
 		return ""
 	}
@@ -1186,11 +1186,11 @@ func (a *App) buildMessages(systemPrompt string) []client.Message {
 			}
 			// Include images: only the most recent image as actual data,
 			// older images as text descriptions to avoid VLM confusion
-			if len(r.Images) > 0 && a.images != nil && isLatestImageRecord(r, a.session.Records) {
+			if len(r.Images) > 0 && a.objects != nil && isLatestImageRecord(r, a.session.Records) {
 				var dataURLs []string
 				var labels []string
 				for _, img := range r.Images {
-					if du, err := a.images.LoadAsDataURL(img.ID, img.MimeType); err == nil {
+					if du, err := a.objects.LoadAsDataURL(img.ID); err == nil {
 						dataURLs = append(dataURLs, du)
 						labels = append(labels, fmt.Sprintf("[Image attached at %s, ID: %s]", r.Timestamp.Format("15:04:05"), img.ID))
 					}
@@ -1218,7 +1218,7 @@ func (a *App) buildMessages(systemPrompt string) []client.Message {
 						}
 					}
 				}
-			} else if strings.Contains(r.Content, "__IMAGE_RECALL__") && a.images != nil {
+			} else if strings.Contains(r.Content, "__IMAGE_RECALL__") && a.objects != nil {
 				// Expand image recall markers from view-image tool
 				dataURL, label := a.expandImageRecall(r.Content)
 				if dataURL != "" {
@@ -1395,13 +1395,13 @@ func (a *App) saveReportImages(content string) ([]memory.ImageEntry, []string) {
 	refs := a.extractReportImageURLs(content)
 	for _, ref := range refs {
 		dataURL := ref["url"]
-		if dataURL == "" || a.images == nil {
+		if dataURL == "" || a.objects == nil {
 			continue
 		}
 		// Save to ImageStore
-		id, mime, err := a.images.Save(dataURL)
+		id, err := a.objects.SaveDataURL(dataURL, objstore.TypeImage, "")
 		if err == nil {
-			entries = append(entries, memory.ImageEntry{ID: id, MimeType: mime})
+			entries = append(entries, memory.ImageEntry{ID: id})
 		}
 		urls = append(urls, dataURL)
 	}
@@ -1440,7 +1440,7 @@ func (a *App) extractReportImageURLs(content string) []map[string]string {
 			for _, r := range a.session.Records {
 				for _, img := range r.Images {
 					if img.ID == imageRef {
-						if du, err := a.images.LoadAsDataURL(img.ID, img.MimeType); err == nil {
+						if du, err := a.objects.LoadAsDataURL(img.ID); err == nil {
 							dataURL = du
 						}
 						break
@@ -1512,7 +1512,7 @@ func (a *App) resolveReportImages(content string) string {
 			for _, r := range a.session.Records {
 				for _, img := range r.Images {
 					if img.ID == imageRef {
-						if du, err := a.images.LoadAsDataURL(img.ID, img.MimeType); err == nil {
+						if du, err := a.objects.LoadAsDataURL(img.ID); err == nil {
 							dataURL = du
 						}
 						break
@@ -1560,25 +1560,11 @@ func (a *App) SaveReport(content, suggestedFilename string, imageStoreIDs []stri
 	// Embed images as inline base64 data URLs in the markdown
 	mdContent := content
 	for i, imgID := range imageStoreIDs {
-		if imgID == "" || a.images == nil {
+		if imgID == "" || a.objects == nil {
 			continue
 		}
 
-		// Find mime type from session records
-		mimeType := "image/png"
-		for _, r := range a.session.Records {
-			for _, img := range r.Images {
-				if img.ID == imgID {
-					mimeType = img.MimeType
-					break
-				}
-			}
-			if mimeType != "image/png" {
-				break
-			}
-		}
-
-		du, err := a.images.LoadAsDataURL(imgID, mimeType)
+		du, err := a.objects.LoadAsDataURL(imgID)
 		if err != nil {
 			continue
 		}
@@ -1655,9 +1641,9 @@ func (a *App) expandImageRecall(content string) (string, string) {
 	if endIdx2 < 0 {
 		return "", ""
 	}
-	mimeType := rest[:endIdx2]
+	_ = rest[:endIdx2] // mimeType no longer needed, objstore handles it
 
-	du, err := a.images.LoadAsDataURL(imageID, mimeType)
+	du, err := a.objects.LoadAsDataURL(imageID)
 	if err != nil {
 		return "", ""
 	}

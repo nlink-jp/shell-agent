@@ -591,6 +591,19 @@ func (a *App) DeletePinnedMemory(index int) bool {
 	return ok
 }
 
+// UpdateLocation is called from the frontend with geolocation data.
+func (a *App) UpdateLocation(lat, lon float64, locality, adminArea, country string) {
+	a.cfg.Location = config.LocationConfig{
+		Enabled:   true,
+		Lat:       lat,
+		Lon:       lon,
+		Locality:  locality,
+		AdminArea: adminArea,
+		Country:   country,
+	}
+	_ = a.cfg.Save()
+}
+
 // GetConfig returns the current config for the settings UI.
 func (a *App) GetConfig() *config.Config {
 	return a.cfg
@@ -833,6 +846,11 @@ func (a *App) buildMessages(systemPrompt string) []client.Message {
 		now.Format("2006-01-02 15:04:05 MST"),
 		zone, offsetHours, offsetMins,
 	)
+	if a.cfg.Location.Enabled && a.cfg.Location.Locality != "" {
+		timeContext += fmt.Sprintf("\nLocation: %s, %s, %s (%.4f, %.4f)",
+			a.cfg.Location.Locality, a.cfg.Location.AdminArea, a.cfg.Location.Country,
+			a.cfg.Location.Lat, a.cfg.Location.Lon)
+	}
 	pinnedContext := ""
 	if a.pinned != nil {
 		if p := a.pinned.FormatForPrompt(); p != "" {
@@ -910,6 +928,7 @@ func (a *App) builtinTools() []client.Tool {
 				Parameters: map[string]any{
 					"type":       "object",
 					"properties": map[string]any{},
+					"required":   []string{},
 				},
 			},
 		},
@@ -1052,7 +1071,7 @@ func (a *App) buildToolDefs() []client.Tool {
 	// Add shell script tools
 	for _, t := range a.tools.List() {
 		props := make(map[string]any)
-		var required []string
+		required := make([]string, 0)
 		for _, p := range t.Params {
 			props[p.Name] = map[string]any{
 				"type":        p.Type,

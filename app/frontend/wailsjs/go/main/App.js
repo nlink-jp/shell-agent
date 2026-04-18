@@ -70,6 +70,10 @@ export function SendMessageWithImages(arg1, arg2) {
   return window['go']['main']['App']['SendMessageWithImages'](arg1, arg2);
 }
 
+export function UpdateLocation(arg1, arg2, arg3, arg4, arg5) {
+  return window['go']['main']['App']['UpdateLocation'](arg1, arg2, arg3, arg4, arg5);
+}
+
 export function UpdatePinnedMemory(arg1, arg2, arg3, arg4) {
   return window['go']['main']['App']['UpdatePinnedMemory'](arg1, arg2, arg3, arg4);
 }

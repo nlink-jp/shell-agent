@@ -16,6 +16,28 @@ export namespace config {
 	        this.api_key = source["api_key"];
 	    }
 	}
+	export class LocationConfig {
+	    enabled: boolean;
+	    locality: string;
+	    admin_area: string;
+	    country: string;
+	    lat: number;
+	    lon: number;
+	
+	    static createFrom(source: any = {}) {
+	        return new LocationConfig(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.enabled = source["enabled"];
+	        this.locality = source["locality"];
+	        this.admin_area = source["admin_area"];
+	        this.country = source["country"];
+	        this.lat = source["lat"];
+	        this.lon = source["lon"];
+	    }
+	}
 	export class WindowConfig {
 	    x: number;
 	    y: number;
@@ -87,6 +109,7 @@ export namespace config {
 	    theme: string;
 	    startup_mode: string;
 	    last_session: string;
+	    location: LocationConfig;
 	
 	    static createFrom(source: any = {}) {
 	        return new Config(source);
@@ -102,6 +125,7 @@ export namespace config {
 	        this.theme = source["theme"];
 	        this.startup_mode = source["startup_mode"];
 	        this.last_session = source["last_session"];
+	        this.location = this.convertValues(source["location"], LocationConfig);
 	    }
 	
 		convertValues(a: any, classs: any, asMap: boolean = false): any {
@@ -122,6 +146,7 @@ export namespace config {
 		    return a;
 		}
 	}
+	
 	
 	
 	

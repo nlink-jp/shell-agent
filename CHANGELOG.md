@@ -2,6 +2,42 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.3.0] - 2026-04-18
+
+### Added
+- Job workspace system: each tool execution gets a unique job ID, temp directory, and persistent blob storage
+- SHELL_AGENT_WORK_DIR environment variable passed to tool scripts
+- Bilingual pinned memory: English + native language expressions
+- Pinned memory edit (double-click) and delete (with confirmation) in Status tab
+- Pinned memory timestamps displayed
+- Tool execution indicator: spinning "Executing: tool-name" display
+- Tool execution timeout (3 minutes) to prevent hangs
+- Tool retry: up to 3 rounds of tool calls per turn
+- Location tool script (get-location): timezone-based inference, no external API
+- Weather tool script (weather): JMA XML feed with region alias mapping
+- Web search tool script (web-search): wraps gem-search CLI
+- Image generation tool script (generate-image): wraps gem-image CLI with job workspace
+- Blob artifact images displayed in tool results
+- view-image tool searches blob storage directories
+- Right-click context menu enabled for DevTools access
+
+### Changed
+- ChatInput extracted to separate React component (memo'd) for input performance
+- Image data URLs stored in ref cache instead of React state
+- Status polling removed (update on message send only)
+- Stale tool instruction messages cleaned at start of each turn
+- System messages hidden from session restore UI
+- Tool results stored as "tool" role in memory (converted to "user" for LLM API)
+- MITL buttons use opaque backgrounds with white text for all-theme readability
+- LLM response text: bare image filenames and markdown image refs stripped
+- Explicit timezone in system prompt (JST UTC+09:00)
+- Leaked [HH:MM:SS] timestamps stripped from LLM responses
+
+### Fixed
+- Empty `required` array (was null) for parameterless tools causing API 400 error
+- Empty LLM responses no longer create blank message bubbles
+- Success/failure differentiated system messages prevent unnecessary tool re-calls
+
 ## [0.2.0] - 2026-04-18
 
 ### Added

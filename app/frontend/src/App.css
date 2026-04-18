@@ -444,6 +444,26 @@
   background: rgba(255, 255, 255, 0.3);
 }
 
+.message.executing .message-content {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  background: var(--bg-msg-tool);
+  border: 1px dashed var(--border-msg-tool);
+}
+
+.executing-text {
+  color: var(--text-tool);
+  font-size: 13px;
+}
+
+.executing-text code {
+  font-family: 'SF Mono', 'Menlo', monospace;
+  background: var(--bg-inline-code);
+  padding: 1px 5px;
+  border-radius: 3px;
+}
+
 .message.streaming .message-content {
   border-style: dashed;
 }

@@ -72,6 +72,7 @@ function App() {
   const [llmStatus, setLLMStatus] = useState<LLMStatus | null>(null);
   const [sidebarTab, setSidebarTab] = useState<'sessions' | 'tools' | 'status'>('sessions');
   const [mitlRequest, setMitlRequest] = useState<ToolCallRequest | null>(null);
+  const [executingTool, setExecutingTool] = useState<string | null>(null);
   const [pinnedMemories, setPinnedMemories] = useState<PinnedMemory[]>([]);
   const [pendingImages, setPendingImages] = useState<string[]>([]);
   const [showSettings, setShowSettings] = useState(false);
@@ -119,7 +120,12 @@ function App() {
       }
     });
 
+    const offToolExecuting = EventsOn('chat:tool_executing', (info: {name: string}) => {
+      setExecutingTool(info.name);
+    });
+
     const offToolResult = EventsOn('chat:toolresult', (res: ToolResult) => {
+      setExecutingTool(null);
       const now = new Date().toLocaleTimeString('ja-JP', { hour12: false });
       setMessages(prev => [...prev, {
         role: 'tool',
@@ -141,6 +147,7 @@ function App() {
       offToken();
       offDone();
       offToolRequest();
+      offToolExecuting();
       offToolResult();
       offThinking();
       offPinned();
@@ -704,7 +711,16 @@ function App() {
             </div>
           ))}
 
-          {streaming && !streamContent && !mitlRequest && (
+          {executingTool && (
+            <div className="message tool executing">
+              <div className="message-content">
+                <span className="spinner" />
+                <span className="executing-text">Executing: <code>{executingTool}</code></span>
+              </div>
+            </div>
+          )}
+
+          {streaming && !streamContent && !mitlRequest && !executingTool && (
             <div className="message assistant thinking">
               <div className="message-header">
                 <span className="message-role">assistant</span>

@@ -187,7 +187,14 @@ function App() {
     });
 
     const offInterim = EventsOn('chat:interim', (text: string) => {
-      // Interim summaries are shown briefly then fade
+      if (text) {
+        const now = new Date().toLocaleTimeString('ja-JP', { hour12: false });
+        setMessages(prev => [...prev, {
+          role: 'assistant',
+          content: text,
+          timestamp: now,
+        }]);
+      }
     });
 
     const offTitleUpdated = EventsOn('chat:title_updated', () => {
@@ -260,13 +267,23 @@ function App() {
       const resp = images.length > 0
         ? await SendMessageWithImages(text, images)
         : await SendMessage(text);
-      setMessages(prev => [...prev, {
-        role: resp.role,
-        content: resp.content,
-        timestamp: resp.timestamp,
-        in_tokens: resp.in_tokens,
-        out_tokens: resp.out_tokens,
-      }]);
+      // Avoid duplicate if the last message already has same content (interim fallback)
+      setMessages(prev => {
+        const last = prev[prev.length - 1];
+        if (last && last.role === 'assistant' && last.content === resp.content) {
+          // Update tokens on existing message instead of duplicating
+          const updated = [...prev];
+          updated[updated.length - 1] = { ...last, in_tokens: resp.in_tokens, out_tokens: resp.out_tokens };
+          return updated;
+        }
+        return [...prev, {
+          role: resp.role,
+          content: resp.content,
+          timestamp: resp.timestamp,
+          in_tokens: resp.in_tokens,
+          out_tokens: resp.out_tokens,
+        }];
+      });
       setStreamContent('');
       refreshStatus();
       ListSessions().then((s) => setSessions(s || []));
@@ -900,7 +917,7 @@ function App() {
             </div>
           )}
 
-          {currentPlan && streaming && (
+          {currentPlan && currentPhase && (
             <div className="plan-display">
               <div className="plan-header">Plan: {currentPlan.goal}</div>
               <div className="plan-steps">

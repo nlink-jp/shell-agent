@@ -81,7 +81,7 @@ func DefaultConfig() *Config {
 			Model:    "google/gemma-4-26b-a4b",
 		},
 		Memory: MemoryConfig{
-			HotTokenLimit:     4096,
+			HotTokenLimit:     65536,
 			WarmRetentionMins: 60,
 			ColdRetentionMins: 1440,
 		},
@@ -119,6 +119,12 @@ func Load() (*Config, error) {
 	if err := json.Unmarshal(data, &cfg); err != nil {
 		return nil, err
 	}
+
+	// Apply minimum defaults for critical values
+	if cfg.Memory.HotTokenLimit < 8192 {
+		cfg.Memory.HotTokenLimit = 65536
+	}
+
 	return &cfg, nil
 }
 

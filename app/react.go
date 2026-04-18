@@ -126,13 +126,16 @@ func (a *App) reactLoop(ctx context.Context, systemPrompt string, toolDefs []cli
 		}
 
 		al.log("[SUMMARIZE] content length=%d", len(content))
+		usedFallback := false
 		// If summarize returned empty, use the last interim summary
 		if content == "" {
 			content = a.lastInterimSummary()
+			usedFallback = true
 			al.log("[SUMMARIZE] fallback to interim, length=%d", len(content))
 		}
 
-		if content != "" {
+		// Only add to records if not a fallback (interim is already in records)
+		if content != "" && !usedFallback {
 			respTime := time.Now()
 			a.session.Records = append(a.session.Records, memory.Record{
 				Timestamp: respTime,
@@ -293,6 +296,8 @@ func (a *App) executePhase(ctx context.Context, systemPrompt string, plan *Plan,
 	}
 
 	toolsUsed := false
+	toolRoundsCompleted := 0
+	emptyResponseCount := 0
 
 	for round := 0; round < maxRounds; round++ {
 		al.log("[EXECUTE] round=%d", round)
@@ -355,8 +360,15 @@ func (a *App) executePhase(ctx context.Context, systemPrompt string, plan *Plan,
 		if len(choice.Message.ToolCalls) == 0 {
 			content := strings.TrimSpace(assistantContent)
 			if content == "" {
+				emptyResponseCount++
+				if emptyResponseCount >= 2 || !planHasMoreToolSteps(plan, toolRoundsCompleted) {
+					al.log("[EXECUTE] empty response (count=%d), breaking", emptyResponseCount)
+					break
+				}
+				al.log("[EXECUTE] empty response but plan has more steps, retrying")
 				continue
 			}
+			emptyResponseCount = 0
 
 			respTime := time.Now()
 			a.session.Records = append(a.session.Records, memory.Record{
@@ -368,6 +380,12 @@ func (a *App) executePhase(ctx context.Context, systemPrompt string, plan *Plan,
 				OutTokens: a.tokenStats.LastOutput,
 			})
 			a.session.UpdatedAt = respTime
+
+			// If plan has more tool steps, treat this as interim and continue
+			if toolsUsed && planHasMoreToolSteps(plan, toolRoundsCompleted) {
+				al.log("[EXECUTE] text response but plan has more steps, continuing")
+				continue
+			}
 
 			return toolsUsed, nil
 		}
@@ -385,9 +403,24 @@ func (a *App) executePhase(ctx context.Context, systemPrompt string, plan *Plan,
 			})
 		}
 
+		// Determine which plan step we're on
+		planStepNum := toolRoundsCompleted + 1
+		if plan != nil {
+			toolStepIdx := 0
+			for _, s := range plan.Steps {
+				if s.Tool != "" && s.Tool != "null" {
+					toolStepIdx++
+					if toolStepIdx == toolRoundsCompleted+1 {
+						planStepNum = s.Step
+						break
+					}
+				}
+			}
+		}
+
 		// Execute each tool call
-		al.log("[EXECUTE] executing %d tool calls", len(choice.Message.ToolCalls))
-		wailsRuntime.EventsEmit(a.ctx, "chat:phase", fmt.Sprintf("execute (step %d)", round+1))
+		al.log("[EXECUTE] executing %d tool calls (plan step %d)", len(choice.Message.ToolCalls), planStepNum)
+		wailsRuntime.EventsEmit(a.ctx, "chat:phase", fmt.Sprintf("execute (step %d)", planStepNum))
 		for _, tc := range choice.Message.ToolCalls {
 			al.log("[EXECUTE]   calling: %s", tc.Function.Name)
 			result, err := a.handleToolCall(tc)
@@ -441,6 +474,8 @@ func (a *App) executePhase(ctx context.Context, systemPrompt string, plan *Plan,
 		}
 
 		a.autoSave()
+		toolRoundsCompleted++
+		al.log("[EXECUTE] toolRoundsCompleted=%d", toolRoundsCompleted)
 
 		// Interim summary: force text-only call to let LLM observe results
 		if ctx.Err() != nil {
@@ -450,10 +485,25 @@ func (a *App) executePhase(ctx context.Context, systemPrompt string, plan *Plan,
 		wailsRuntime.EventsEmit(a.ctx, "chat:thinking", nil)
 
 		interimMessages := a.buildMessagesWithPrompt(systemPrompt) // use base prompt without tool hints
-		// Add instruction for interim summary
-		interimMessages = append(interimMessages, client.TextMessage("system",
-			"The tool(s) have been executed and the results are shown above. "+
-				"Briefly describe what you learned. Then decide: do you need another tool to complete the task, or can you give the final answer?"))
+		// Add ephemeral instruction with remaining plan steps
+		interimInstruction := "Briefly summarize what you learned from the tool result."
+		if planHasMoreToolSteps(plan, toolRoundsCompleted) {
+			var remaining []string
+			toolStepsSeen := 0
+			for _, s := range plan.Steps {
+				if s.Tool != "" && s.Tool != "null" {
+					toolStepsSeen++
+					if toolStepsSeen > round+1 {
+						remaining = append(remaining, fmt.Sprintf("- %s (tool: %s)", s.Description, s.Tool))
+					}
+				}
+			}
+			if len(remaining) > 0 {
+				interimInstruction += "\n\nRemaining steps in the plan:\n" + strings.Join(remaining, "\n") +
+					"\n\nPrepare the information needed for the next step."
+			}
+		}
+		interimMessages = append(interimMessages, client.TextMessage("system", interimInstruction))
 
 		interimResp, err := a.llm.ChatWithContext(ctx, interimMessages, nil) // no tools = force text
 		if err != nil {
@@ -476,6 +526,9 @@ func (a *App) executePhase(ctx context.Context, systemPrompt string, plan *Plan,
 			// Check if interim contains gemma tool call tags — if so, execute them
 			if parsed := parseGemmaToolCalls(interim); len(parsed) > 0 {
 				al.log("[INTERIM] gemma tool calls detected: %d", len(parsed))
+				for _, tc := range parsed {
+					al.log("[INTERIM]   gemma tool: %s(%s)", tc.Function.Name, tc.Function.Arguments)
+				}
 				cleanInterim := stripGemmaToolCallTags(interim)
 				if cleanInterim != "" {
 					a.session.Records = append(a.session.Records, memory.Record{
@@ -487,9 +540,13 @@ func (a *App) executePhase(ctx context.Context, systemPrompt string, plan *Plan,
 				}
 				// Execute the tool calls from interim
 				for _, tc := range parsed {
+					al.log("[INTERIM]   executing: %s", tc.Function.Name)
 					result, tcErr := a.handleToolCall(tc)
 					if tcErr != nil {
+						al.log("[INTERIM]   error: %v", tcErr)
 						result = fmt.Sprintf("Error: %v", tcErr)
+					} else {
+						al.log("[INTERIM]   result: %.200s", result)
 					}
 					toolResultEvent := map[string]string{"name": tc.Function.Name, "result": result}
 					imageDataURL := a.extractImageFromResult(result)
@@ -525,9 +582,30 @@ func (a *App) executePhase(ctx context.Context, systemPrompt string, plan *Plan,
 			}
 		}
 
-		// Clean up ephemeral system messages
-		a.cleanEphemeralMessages()
+		// Update phase display for next step
+		if planHasMoreToolSteps(plan, toolRoundsCompleted) {
+			nextStep := toolRoundsCompleted + 1
+			if plan != nil {
+				idx := 0
+				for _, s := range plan.Steps {
+					if s.Tool != "" && s.Tool != "null" {
+						idx++
+						if idx == nextStep {
+							nextStep = s.Step
+							break
+						}
+					}
+				}
+			}
+			wailsRuntime.EventsEmit(a.ctx, "chat:phase", fmt.Sprintf("execute (step %d)", nextStep))
+		}
 
+
+		// Continue if: interim had gemma tool calls, OR plan has more tool steps
+		if !continueLoop && planHasMoreToolSteps(plan, toolRoundsCompleted) {
+			al.log("[EXECUTE] plan has more tool steps, continuing")
+			continueLoop = true
+		}
 		al.log("[EXECUTE] continueLoop=%v", continueLoop)
 		if !continueLoop {
 			break
@@ -682,14 +760,3 @@ func stripGemmaToolCallTags(text string) string {
 	return strings.TrimSpace(result)
 }
 
-// cleanEphemeralMessages removes turn-local system instruction messages.
-func (a *App) cleanEphemeralMessages() {
-	filtered := a.session.Records[:0]
-	for _, r := range a.session.Records {
-		if r.Role == "system" && (strings.Contains(r.Content, "tool") || strings.Contains(r.Content, "Briefly describe")) {
-			continue
-		}
-		filtered = append(filtered, r)
-	}
-	a.session.Records = filtered
-}

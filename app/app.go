@@ -340,16 +340,6 @@ func (a *App) sendMessage(content string, images []string) (ChatMessage, error) 
 		}
 	}
 
-	// Remove stale tool instruction messages from previous turns
-	filtered := a.session.Records[:0]
-	for _, r := range a.session.Records {
-		if r.Role == "system" && strings.Contains(r.Content, "tool has been executed") {
-			continue
-		}
-		filtered = append(filtered, r)
-	}
-	a.session.Records = filtered
-
 	a.session.Records = append(a.session.Records, memory.Record{
 		Timestamp: now,
 		Role:      "user",
@@ -412,12 +402,14 @@ func (a *App) handleToolCall(tc client.ToolCall) (string, error) {
 
 	tool, ok := a.tools.Get(tc.Function.Name)
 	if !ok {
-		// Fuzzy match: try matching by prefix or contained name
-		// Handles LLM generating names like "weather:get_current_weather" for "weather"
+		// Fuzzy match: only if the LLM-generated name CONTAINS a real tool name
+		// e.g., "weather:get_current_weather" contains "weather"
+		// But "google:get_weather" does NOT match "get-location"
 		for _, t := range a.tools.List() {
-			if strings.Contains(tc.Function.Name, t.Name) || strings.Contains(t.Name, tc.Function.Name) {
+			if strings.Contains(tc.Function.Name, t.Name) {
 				tool = t
 				ok = true
+				fmt.Printf("fuzzy tool match: %s → %s\n", tc.Function.Name, t.Name)
 				tc.Function.Name = t.Name
 				break
 			}

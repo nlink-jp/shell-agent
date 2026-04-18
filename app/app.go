@@ -153,22 +153,7 @@ func (a *App) startup(ctx context.Context) {
 
 	// Start mcp-guardian instances
 	a.guardians = make(map[string]*mcp.Guardian)
-	for _, gc := range cfg.Guardians {
-		if gc.BinaryPath == "" || gc.Name == "" {
-			continue
-		}
-		args := []string{}
-		if gc.ProfilePath != "" {
-			args = append(args, "--profile", config.ExpandPath(gc.ProfilePath))
-		}
-		g := mcp.NewGuardian(config.ExpandPath(gc.BinaryPath), args...)
-		if err := g.Start(); err != nil {
-			fmt.Printf("mcp-guardian [%s] start: %v\n", gc.Name, err)
-		} else {
-			a.guardians[gc.Name] = g
-			fmt.Printf("mcp-guardian [%s] started: %d tools\n", gc.Name, len(g.Tools()))
-		}
-	}
+	a.restartGuardians()
 }
 
 // shutdown is called when the app is closing.
@@ -716,7 +701,42 @@ func (a *App) SaveConfig(cfgJSON string) error {
 	a.llm = client.New(cfg.API.Endpoint, cfg.API.Model, cfg.API.APIKey)
 	a.tools = toolcall.NewRegistry(config.ExpandPath(cfg.Tools.ScriptDir))
 	_ = a.tools.Scan()
+
+	// Restart MCP guardians
+	a.restartGuardians()
+
 	return cfg.Save()
+}
+
+// restartGuardians stops all running guardians and starts new ones from config.
+func (a *App) restartGuardians() {
+	// Stop existing
+	for name, g := range a.guardians {
+		_ = g.Stop()
+		fmt.Printf("mcp-guardian [%s] stopped\n", name)
+	}
+
+	// Start new
+	a.guardians = make(map[string]*mcp.Guardian)
+	for _, gc := range a.cfg.Guardians {
+		if gc.BinaryPath == "" || gc.Name == "" {
+			continue
+		}
+		args := []string{}
+		if gc.ProfilePath != "" {
+			args = append(args, "--profile", config.ExpandPath(gc.ProfilePath))
+		}
+		g := mcp.NewGuardian(config.ExpandPath(gc.BinaryPath), args...)
+		if err := g.Start(); err != nil {
+			fmt.Printf("mcp-guardian [%s] start: %v\n", gc.Name, err)
+		} else {
+			a.guardians[gc.Name] = g
+			fmt.Printf("mcp-guardian [%s] started: %d tools\n", gc.Name, len(g.Tools()))
+		}
+	}
+
+	// Refresh tools in frontend
+	wailsRuntime.EventsEmit(a.ctx, "chat:tools_updated", a.GetTools())
 }
 
 // generateTitleIfNeeded generates a session title from the first exchange.

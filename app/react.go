@@ -4,15 +4,54 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log"
+	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
 	"github.com/nlink-jp/nlk/jsonfix"
 	"github.com/nlink-jp/nlk/strip"
 	"github.com/nlink-jp/shell-agent/internal/client"
+	"github.com/nlink-jp/shell-agent/internal/config"
 	"github.com/nlink-jp/shell-agent/internal/memory"
 	wailsRuntime "github.com/wailsapp/wails/v2/pkg/runtime"
 )
+
+// agentLog provides structured logging for the ReAct loop.
+type agentLog struct {
+	logger *log.Logger
+	file   *os.File
+}
+
+func newAgentLog() *agentLog {
+	logDir := filepath.Join(config.ConfigDir(), "logs")
+	_ = os.MkdirAll(logDir, 0o755)
+	logPath := filepath.Join(logDir, "react.log")
+
+	f, err := os.OpenFile(logPath, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o644)
+	if err != nil {
+		return &agentLog{logger: log.New(os.Stderr, "[react] ", log.LstdFlags)}
+	}
+	return &agentLog{
+		logger: log.New(f, "", log.LstdFlags),
+		file:   f,
+	}
+}
+
+func (l *agentLog) close() {
+	if l.file != nil {
+		l.file.Close()
+	}
+}
+
+func (l *agentLog) log(format string, args ...any) {
+	l.logger.Printf(format, args...)
+}
+
+func (l *agentLog) separator() {
+	l.logger.Println("────────────────────────────────────────")
+}
 
 // Plan represents a structured execution plan from the planning phase.
 type Plan struct {
@@ -30,24 +69,36 @@ type PlanStep struct {
 
 // reactLoop orchestrates the Plan → Execute → Summarize phases.
 func (a *App) reactLoop(ctx context.Context, systemPrompt string, toolDefs []client.Tool) (ChatMessage, error) {
+	al := newAgentLog()
+	defer al.close()
+
+	al.separator()
+	al.log("=== NEW TURN === tools=%d", len(toolDefs))
+
 	// Phase 1: Plan
 	var plan *Plan
 	if len(toolDefs) > 0 {
+		al.log("[PLAN] starting")
 		wailsRuntime.EventsEmit(a.ctx, "chat:phase", "plan")
 		var err error
 		plan, err = a.planPhase(ctx, toolDefs)
 		if err != nil {
-			// Planning failed — proceed without plan
-			fmt.Printf("plan phase error: %v\n", err)
+			al.log("[PLAN] error: %v", err)
 		} else {
+			planJSON, _ := json.Marshal(plan)
+			al.log("[PLAN] result: %s", string(planJSON))
 			wailsRuntime.EventsEmit(a.ctx, "chat:plan", plan)
 		}
+	} else {
+		al.log("[PLAN] skipped (no tools)")
 	}
 
 	// Phase 2: Execute
+	al.log("[EXECUTE] starting")
 	wailsRuntime.EventsEmit(a.ctx, "chat:phase", "execute")
-	toolsUsed, err := a.executePhase(ctx, systemPrompt, plan, toolDefs)
+	toolsUsed, err := a.executePhase(ctx, systemPrompt, plan, toolDefs, al)
 	if err != nil {
+		al.log("[EXECUTE] error: %v", err)
 		if ctx.Err() != nil {
 			return ChatMessage{
 				Role: "assistant", Content: "(Cancelled)",
@@ -57,8 +108,11 @@ func (a *App) reactLoop(ctx context.Context, systemPrompt string, toolDefs []cli
 		return ChatMessage{}, err
 	}
 
+	al.log("[EXECUTE] done, toolsUsed=%v", toolsUsed)
+
 	// Phase 3: Summarize (only if tools were used)
 	if toolsUsed {
+		al.log("[SUMMARIZE] starting")
 		wailsRuntime.EventsEmit(a.ctx, "chat:phase", "summarize")
 		content, err := a.summarizePhase(ctx, systemPrompt)
 		if err != nil {
@@ -71,9 +125,11 @@ func (a *App) reactLoop(ctx context.Context, systemPrompt string, toolDefs []cli
 			return ChatMessage{}, err
 		}
 
+		al.log("[SUMMARIZE] content length=%d", len(content))
 		// If summarize returned empty, use the last interim summary
 		if content == "" {
 			content = a.lastInterimSummary()
+			al.log("[SUMMARIZE] fallback to interim, length=%d", len(content))
 		}
 
 		if content != "" {
@@ -217,7 +273,7 @@ func planNeedsTools(plan *Plan) bool {
 }
 
 // executePhase runs the ReAct loop. Returns true if any tools were used.
-func (a *App) executePhase(ctx context.Context, systemPrompt string, plan *Plan, toolDefs []client.Tool) (bool, error) {
+func (a *App) executePhase(ctx context.Context, systemPrompt string, plan *Plan, toolDefs []client.Tool, al *agentLog) (bool, error) {
 	maxRounds := a.cfg.Memory.MaxToolRounds
 	if maxRounds <= 0 {
 		maxRounds = 10
@@ -239,11 +295,13 @@ func (a *App) executePhase(ctx context.Context, systemPrompt string, plan *Plan,
 	toolsUsed := false
 
 	for round := 0; round < maxRounds; round++ {
+		al.log("[EXECUTE] round=%d", round)
 		if ctx.Err() != nil {
 			return toolsUsed, ctx.Err()
 		}
 
 		messages := a.buildMessagesWithPrompt(execPrompt)
+		al.log("[EXECUTE] messages=%d, tools=%d", len(messages), len(toolDefs))
 
 		// Determine whether to include tools
 		var currentTools []client.Tool
@@ -270,9 +328,20 @@ func (a *App) executePhase(ctx context.Context, systemPrompt string, plan *Plan,
 		assistantContent := strip.ThinkTags(choice.Message.Content)
 		assistantContent = stripLeakedTimestamps(assistantContent)
 
+		al.log("[EXECUTE] LLM response: tool_calls=%d, content_len=%d", len(choice.Message.ToolCalls), len(assistantContent))
+		if len(choice.Message.ToolCalls) > 0 {
+			for _, tc := range choice.Message.ToolCalls {
+				al.log("[EXECUTE]   API tool_call: %s(%s)", tc.Function.Name, tc.Function.Arguments[:min(100, len(tc.Function.Arguments))])
+			}
+		}
+
 		// Check for gemma-style text-based tool calls: <|tool_call>call:name{args}<tool_call|>
 		if len(choice.Message.ToolCalls) == 0 {
 			if parsed := parseGemmaToolCalls(assistantContent); len(parsed) > 0 {
+				al.log("[EXECUTE]   gemma tags detected: %d tool calls", len(parsed))
+				for _, tc := range parsed {
+					al.log("[EXECUTE]   gemma tool_call: %s(%s)", tc.Function.Name, tc.Function.Arguments[:min(100, len(tc.Function.Arguments))])
+				}
 				choice.Message.ToolCalls = parsed
 				// Remove tool call tags from displayed text
 				assistantContent = stripGemmaToolCallTags(assistantContent)
@@ -317,8 +386,10 @@ func (a *App) executePhase(ctx context.Context, systemPrompt string, plan *Plan,
 		}
 
 		// Execute each tool call
+		al.log("[EXECUTE] executing %d tool calls", len(choice.Message.ToolCalls))
 		wailsRuntime.EventsEmit(a.ctx, "chat:phase", fmt.Sprintf("execute (step %d)", round+1))
 		for _, tc := range choice.Message.ToolCalls {
+			al.log("[EXECUTE]   calling: %s", tc.Function.Name)
 			result, err := a.handleToolCall(tc)
 			if err != nil {
 				result = fmt.Sprintf("Error: %v", err)
@@ -396,11 +467,15 @@ func (a *App) executePhase(ctx context.Context, systemPrompt string, plan *Plan,
 
 		continueLoop := false
 		if len(interimResp.Choices) > 0 {
+			al.log("[INTERIM] response received")
 			interim := strings.TrimSpace(strip.ThinkTags(interimResp.Choices[0].Message.Content))
 			interim = stripLeakedTimestamps(interim)
 
+			al.log("[INTERIM] content_len=%d, preview=%.100s", len(interim), interim)
+
 			// Check if interim contains gemma tool call tags — if so, execute them
 			if parsed := parseGemmaToolCalls(interim); len(parsed) > 0 {
+				al.log("[INTERIM] gemma tool calls detected: %d", len(parsed))
 				cleanInterim := stripGemmaToolCallTags(interim)
 				if cleanInterim != "" {
 					a.session.Records = append(a.session.Records, memory.Record{
@@ -453,6 +528,7 @@ func (a *App) executePhase(ctx context.Context, systemPrompt string, plan *Plan,
 		// Clean up ephemeral system messages
 		a.cleanEphemeralMessages()
 
+		al.log("[EXECUTE] continueLoop=%v", continueLoop)
 		if !continueLoop {
 			break
 		}

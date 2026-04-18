@@ -8,6 +8,7 @@ import {
   SendMessage, SendMessageWithImages, GetTools, GetLLMStatus, ListSessions,
   NewSession, LoadSession, DeleteSession, RenameSession,
   ApproveMITL, RejectMITL, GetPinnedMemories,
+  UpdatePinnedMemory, DeletePinnedMemory,
   GetConfig, SaveConfig,
 } from '../wailsjs/go/main/App';
 import { EventsOn } from '../wailsjs/runtime/runtime';
@@ -55,8 +56,10 @@ interface ToolResult {
 
 interface PinnedMemory {
   fact: string;
+  native_fact: string;
   category: string;
   source_time: string;
+  created_at: string;
 }
 
 function App() {
@@ -273,6 +276,11 @@ function App() {
   const [deleteConfirm, setDeleteConfirm] = useState<string | null>(null);
   const [editingSession, setEditingSession] = useState<string | null>(null);
   const [editTitle, setEditTitle] = useState('');
+  const [editingPinned, setEditingPinned] = useState<number | null>(null);
+  const [editPinnedFact, setEditPinnedFact] = useState('');
+  const [editPinnedNative, setEditPinnedNative] = useState('');
+  const [editPinnedCategory, setEditPinnedCategory] = useState('');
+  const [deletePinnedConfirm, setDeletePinnedConfirm] = useState<number | null>(null);
 
   function handleDeleteSession(id: string) {
     setDeleteConfirm(id);
@@ -470,8 +478,71 @@ function App() {
                   <label className="pinned-header">Remembered Facts</label>
                   {pinnedMemories.map((p, i) => (
                     <div key={i} className="pinned-item">
-                      <span className={`pinned-category ${p.category}`}>{p.category}</span>
-                      <span className="pinned-fact">{p.fact}</span>
+                      {editingPinned === i ? (
+                        <div className="pinned-edit">
+                          <select value={editPinnedCategory} onChange={e => setEditPinnedCategory(e.target.value)}>
+                            <option value="fact">fact</option>
+                            <option value="preference">preference</option>
+                            <option value="decision">decision</option>
+                            <option value="context">context</option>
+                          </select>
+                          <div className="pinned-edit-fields">
+                            <input
+                              type="text"
+                              value={editPinnedNative}
+                              onChange={e => setEditPinnedNative(e.target.value)}
+                              onCompositionStart={handleCompositionStart}
+                              onCompositionEnd={handleCompositionEnd}
+                              placeholder="Native"
+                              autoFocus
+                            />
+                            <input
+                              type="text"
+                              value={editPinnedFact}
+                              onChange={e => setEditPinnedFact(e.target.value)}
+                              onCompositionStart={handleCompositionStart}
+                              onCompositionEnd={handleCompositionEnd}
+                              onKeyDown={e => {
+                                if (e.key === 'Enter' && !composingRef.current) {
+                                  UpdatePinnedMemory(i, editPinnedFact, editPinnedNative, editPinnedCategory).then(() => {
+                                    GetPinnedMemories().then(p => setPinnedMemories(p || []));
+                                  });
+                                  setEditingPinned(null);
+                                }
+                                if (e.key === 'Escape') setEditingPinned(null);
+                              }}
+                              placeholder="English"
+                            />
+                          </div>
+                          <button className="pinned-edit-save" onClick={() => {
+                            UpdatePinnedMemory(i, editPinnedFact, editPinnedNative, editPinnedCategory).then(() => {
+                              GetPinnedMemories().then(p => setPinnedMemories(p || []));
+                            });
+                            setEditingPinned(null);
+                          }}>OK</button>
+                        </div>
+                      ) : (
+                        <>
+                          <span className={`pinned-category ${p.category}`}>{p.category}</span>
+                          <div className="pinned-content" onDoubleClick={() => { setEditingPinned(i); setEditPinnedFact(p.fact); setEditPinnedNative(p.native_fact || ''); setEditPinnedCategory(p.category); }}>
+                            <span className="pinned-fact">{p.native_fact || p.fact}</span>
+                            {p.native_fact && p.native_fact !== p.fact && <span className="pinned-fact-en">{p.fact}</span>}
+                            <span className="pinned-time">{p.created_at ? new Date(p.created_at).toLocaleString('ja-JP', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }) : ''}</span>
+                          </div>
+                          <button className="pinned-delete" onClick={() => setDeletePinnedConfirm(i)}>&#x2715;</button>
+                          {deletePinnedConfirm === i && (
+                            <div className="pinned-confirm">
+                              <button className="pinned-confirm-yes" onClick={() => {
+                                DeletePinnedMemory(i).then(() => {
+                                  GetPinnedMemories().then(p => setPinnedMemories(p || []));
+                                });
+                                setDeletePinnedConfirm(null);
+                              }}>Delete</button>
+                              <button className="pinned-confirm-no" onClick={() => setDeletePinnedConfirm(null)}>Cancel</button>
+                            </div>
+                          )}
+                        </>
+                      )}
                     </div>
                   ))}
                 </div>

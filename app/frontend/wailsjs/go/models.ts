@@ -209,6 +209,7 @@ export namespace memory {
 	
 	export class PinnedMemory {
 	    fact: string;
+	    native_fact: string;
 	    category: string;
 	    // Go type: time
 	    source_time: any;
@@ -222,6 +223,7 @@ export namespace memory {
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.fact = source["fact"];
+	        this.native_fact = source["native_fact"];
 	        this.category = source["category"];
 	        this.source_time = this.convertValues(source["source_time"], null);
 	        this.created_at = this.convertValues(source["created_at"], null);

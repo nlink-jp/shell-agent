@@ -6,6 +6,8 @@ import {memory} from '../models';
 
 export function ApproveMITL():Promise<void>;
 
+export function DeletePinnedMemory(arg1:number):Promise<boolean>;
+
 export function DeleteSession(arg1:string):Promise<void>;
 
 export function GetConfig():Promise<config.Config>;
@@ -35,3 +37,5 @@ export function SaveConfig(arg1:string):Promise<void>;
 export function SendMessage(arg1:string):Promise<main.ChatMessage>;
 
 export function SendMessageWithImages(arg1:string,arg2:Array<string>):Promise<main.ChatMessage>;
+
+export function UpdatePinnedMemory(arg1:number,arg2:string,arg3:string,arg4:string):Promise<boolean>;

@@ -6,6 +6,10 @@ export function ApproveMITL() {
   return window['go']['main']['App']['ApproveMITL']();
 }
 
+export function DeletePinnedMemory(arg1) {
+  return window['go']['main']['App']['DeletePinnedMemory'](arg1);
+}
+
 export function DeleteSession(arg1) {
   return window['go']['main']['App']['DeleteSession'](arg1);
 }
@@ -64,4 +68,8 @@ export function SendMessage(arg1) {
 
 export function SendMessageWithImages(arg1, arg2) {
   return window['go']['main']['App']['SendMessageWithImages'](arg1, arg2);
+}
+
+export function UpdatePinnedMemory(arg1, arg2, arg3, arg4) {
+  return window['go']['main']['App']['UpdatePinnedMemory'](arg1, arg2, arg3, arg4);
 }

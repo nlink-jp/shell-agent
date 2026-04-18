@@ -385,6 +385,9 @@ function App() {
       )}
       {sidebarCollapsed && (
         <div className="sidebar-collapsed">
+          <div className="sidebar-top">
+            <button className="sidebar-nav" onClick={() => { setSidebarCollapsed(false); setSidebarTab('sessions'); }} title="Sessions"><span className="sidebar-nav-ic ic-status">&#x2630;</span></button>
+          </div>
           <div className="sidebar-bottom">
             <button className="sidebar-nav" onClick={handleNewSession} title="New Chat"><span className="sidebar-nav-ic">+</span></button>
             <div className="sidebar-bottom-divider" />
@@ -398,8 +401,8 @@ function App() {
         </div>
       )}
       <div className="sidebar" style={{ width: sidebarCollapsed ? 0 : sidebarWidth, display: sidebarCollapsed ? 'none' : undefined }}>
-        <div className="sidebar-header">
-          <h2>Shell Agent</h2>
+        <div className="sidebar-top">
+          <button className={`sidebar-nav ${sidebarTab === 'sessions' ? 'active' : ''}`} onClick={() => setSidebarTab('sessions')}><span className="sidebar-nav-ic ic-status">&#x2630;</span> Sessions</button>
         </div>
 
         <div className="sidebar-content">

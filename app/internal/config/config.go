@@ -55,6 +55,7 @@ type MemoryConfig struct {
 	HotTokenLimit     int `json:"hot_token_limit"`
 	WarmRetentionMins int `json:"warm_retention_mins"`
 	ColdRetentionMins int `json:"cold_retention_mins"`
+	MaxToolRounds     int `json:"max_tool_rounds"`
 }
 
 // ToolsConfig holds tool script settings.

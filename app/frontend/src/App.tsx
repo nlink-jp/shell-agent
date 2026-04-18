@@ -10,7 +10,7 @@ import {
   NewSession, LoadSession, DeleteSession, RenameSession,
   ApproveMITL, RejectMITL, GetPinnedMemories,
   UpdatePinnedMemory, DeletePinnedMemory,
-  GetConfig, SaveConfig,
+  GetConfig, SaveConfig, RestartGuardians,
 } from '../wailsjs/go/main/App';
 import { EventsOn } from '../wailsjs/runtime/runtime';
 
@@ -586,6 +586,10 @@ function App() {
                   <span>Cold Retention (min)</span>
                   <input type="number" value={settings.memory?.cold_retention_mins || 1440} onChange={e => updateSetting('memory', 'cold_retention_mins', parseInt(e.target.value) || 1440)} />
                 </label>
+                <label>
+                  <span>Max Tool Rounds</span>
+                  <input type="number" value={settings.memory?.max_tool_rounds || 10} onChange={e => updateSetting('memory', 'max_tool_rounds', parseInt(e.target.value) || 10)} />
+                </label>
               </div>
 
               <div className="settings-section">
@@ -634,10 +638,17 @@ function App() {
                     </label>
                   </div>
                 ))}
-                <button className="guardian-add" onClick={() => {
-                  const next = [...(settings.guardians || []), { name: '', binary_path: 'mcp-guardian', profile_path: '' }];
-                  setSettings((prev: any) => ({ ...prev, guardians: next }));
-                }}>+ Add Guardian</button>
+                <div className="guardian-buttons">
+                  <button className="guardian-add" onClick={() => {
+                    const next = [...(settings.guardians || []), { name: '', binary_path: 'mcp-guardian', profile_path: '' }];
+                    setSettings((prev: any) => ({ ...prev, guardians: next }));
+                  }}>+ Add Guardian</button>
+                  <button className="guardian-restart" onClick={() => {
+                    RestartGuardians().then((count) => {
+                      GetTools().then(setTools);
+                    });
+                  }}>Restart All</button>
+                </div>
               </div>
             </div>
 

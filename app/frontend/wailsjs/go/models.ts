@@ -88,6 +88,7 @@ export namespace config {
 	    hot_token_limit: number;
 	    warm_retention_mins: number;
 	    cold_retention_mins: number;
+	    max_tool_rounds: number;
 	
 	    static createFrom(source: any = {}) {
 	        return new MemoryConfig(source);
@@ -98,6 +99,7 @@ export namespace config {
 	        this.hot_token_limit = source["hot_token_limit"];
 	        this.warm_retention_mins = source["warm_retention_mins"];
 	        this.cold_retention_mins = source["cold_retention_mins"];
+	        this.max_tool_rounds = source["max_tool_rounds"];
 	    }
 	}
 	export class Config {

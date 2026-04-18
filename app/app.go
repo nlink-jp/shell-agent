@@ -306,13 +306,14 @@ func (a *App) sendMessage(content string, images []string) (ChatMessage, error) 
 	toolDefs := a.buildToolDefs()
 
 	const maxIterations = 10
-	toolsExecuted := false
+	toolCallCount := 0
 	for i := 0; i < maxIterations; i++ {
 		messages := a.buildMessages(systemPrompt)
 
-		// After tool execution, omit tool defs to force a text response
+		// After one round of tool execution, still provide tools
+		// but limit total tool call rounds to prevent infinite loops
 		var currentTools []client.Tool
-		if !toolsExecuted {
+		if toolCallCount < 3 {
 			currentTools = toolDefs
 		}
 
@@ -398,12 +399,12 @@ func (a *App) sendMessage(content string, images []string) (ChatMessage, error) 
 		a.session.Records = append(a.session.Records, memory.Record{
 			Timestamp: time.Now(),
 			Role:      "system",
-			Content:   "The tool has been executed and the result is shown above. Now respond to the user based on the tool output. Do NOT call any more tools. Provide your answer in natural language.",
+			Content:   "The tool has been executed and the result is shown above. Respond to the user based on the tool output. If the tool failed, you may retry or use a different approach.",
 			Tier:      memory.TierHot,
 		})
 
 		a.autoSave()
-		toolsExecuted = true
+		toolCallCount++
 
 		// Notify frontend that we're going back to the LLM
 		wailsRuntime.EventsEmit(a.ctx, "chat:thinking", nil)
@@ -458,6 +459,9 @@ func (a *App) handleToolCall(tc client.ToolCall) (string, error) {
 	}
 
 	wailsRuntime.EventsEmit(a.ctx, "chat:toolcall_request", req)
+	wailsRuntime.EventsEmit(a.ctx, "chat:tool_executing", map[string]string{
+		"name": tc.Function.Name,
+	})
 
 	if req.NeedsMITL {
 		resp := <-a.mitlCh

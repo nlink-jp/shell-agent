@@ -2,12 +2,14 @@ package toolcall
 
 import (
 	"bufio"
+	"context"
 	"encoding/json"
 	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"time"
 )
 
 // Category determines MITL behavior.
@@ -85,6 +87,9 @@ func (r *Registry) List() []*ToolScript {
 	return list
 }
 
+// DefaultTimeout is the maximum time a tool script can run.
+const DefaultTimeout = 3 * time.Minute
+
 // Execute runs a tool script with JSON input via stdin.
 func (r *Registry) Execute(name string, argsJSON string) (string, error) {
 	tool, ok := r.tools[name]
@@ -92,11 +97,17 @@ func (r *Registry) Execute(name string, argsJSON string) (string, error) {
 		return "", fmt.Errorf("tool not found: %s", name)
 	}
 
-	cmd := exec.Command(tool.Path)
+	ctx, cancel := context.WithTimeout(context.Background(), DefaultTimeout)
+	defer cancel()
+
+	cmd := exec.CommandContext(ctx, tool.Path)
 	cmd.Stdin = strings.NewReader(argsJSON)
 
 	output, err := cmd.Output()
 	if err != nil {
+		if ctx.Err() == context.DeadlineExceeded {
+			return "", fmt.Errorf("tool %s timed out after %v", name, DefaultTimeout)
+		}
 		if exitErr, ok := err.(*exec.ExitError); ok {
 			return "", fmt.Errorf("tool %s failed (exit %d): %s", name, exitErr.ExitCode(), string(exitErr.Stderr))
 		}

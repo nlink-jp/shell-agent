@@ -2,6 +2,29 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.6.0] - 2026-04-19
+
+### Added
+- Central object repository (`internal/objstore`) for all binary data
+- Unique 12-char hex IDs for all objects (images, blobs, reports)
+- JSON metadata index with type, MIME, filename, size tracking
+- Auto-rebuild index from files on corruption
+
+### Changed
+- All image storage migrated from ImageStore to objstore
+- All tool artifact (blob) storage migrated from JobManager to objstore
+- JobManager simplified: returns Artifact data instead of blob paths
+- Image/blob references throughout use objstore IDs
+- Object IDs shortened to 12 chars for LLM compatibility
+- fileToDataURL checks objstore first by ID
+- IMAGE_RECALL_BLOB resolved via objstore
+- Storage consolidated: `objects/data/` replaces `images/` and `blobs/`
+
+### Removed
+- `internal/memory/ImageStore` (replaced by objstore)
+- JobManager blob directory and BlobPath method
+- Scattered blob path resolution logic
+
 ## [0.5.0] - 2026-04-18
 
 ### Added

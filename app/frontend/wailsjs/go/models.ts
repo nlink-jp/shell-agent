@@ -78,6 +78,7 @@ export namespace config {
 	}
 	export class ToolsConfig {
 	    script_dir: string;
+	    disabled_tools: string[];
 	
 	    static createFrom(source: any = {}) {
 	        return new ToolsConfig(source);
@@ -86,6 +87,7 @@ export namespace config {
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.script_dir = source["script_dir"];
+	        this.disabled_tools = source["disabled_tools"];
 	    }
 	}
 	export class MemoryConfig {
@@ -235,6 +237,7 @@ export namespace main {
 	    name: string;
 	    description: string;
 	    category: string;
+	    enabled: boolean;
 	
 	    static createFrom(source: any = {}) {
 	        return new ToolInfo(source);
@@ -245,6 +248,7 @@ export namespace main {
 	        this.name = source["name"];
 	        this.description = source["description"];
 	        this.category = source["category"];
+	        this.enabled = source["enabled"];
 	    }
 	}
 

@@ -86,6 +86,10 @@ export function SendMessageWithImages(arg1, arg2) {
   return window['go']['main']['App']['SendMessageWithImages'](arg1, arg2);
 }
 
+export function ToggleTool(arg1, arg2) {
+  return window['go']['main']['App']['ToggleTool'](arg1, arg2);
+}
+
 export function UpdateLocation(arg1, arg2, arg3, arg4, arg5) {
   return window['go']['main']['App']['UpdateLocation'](arg1, arg2, arg3, arg4, arg5);
 }

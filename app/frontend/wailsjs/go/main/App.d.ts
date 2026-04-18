@@ -46,6 +46,8 @@ export function SendMessage(arg1:string):Promise<main.ChatMessage>;
 
 export function SendMessageWithImages(arg1:string,arg2:Array<string>):Promise<main.ChatMessage>;
 
+export function ToggleTool(arg1:string,arg2:boolean):Promise<void>;
+
 export function UpdateLocation(arg1:number,arg2:number,arg3:string,arg4:string,arg5:string):Promise<void>;
 
 export function UpdatePinnedMemory(arg1:number,arg2:string,arg3:string,arg4:string):Promise<boolean>;

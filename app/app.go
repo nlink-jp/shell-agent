@@ -245,12 +245,10 @@ func (a *App) LoadSession(id string) ([]ChatMessage, error) {
 			OutTokens: r.OutTokens,
 			Report:    r.Report,
 		}
-		// Load images from disk for display
-		if len(r.Images) > 0 && a.images != nil {
+		// Send ImageStore IDs (not data URLs) — frontend loads lazily
+		if len(r.Images) > 0 {
 			for _, img := range r.Images {
-				if du, err := a.images.LoadAsDataURL(img.ID, img.MimeType); err == nil {
-					msg.Images = append(msg.Images, du)
-				}
+				msg.Images = append(msg.Images, img.ID)
 			}
 		}
 		msgs = append(msgs, msg)
@@ -1360,8 +1358,14 @@ func (a *App) createReportTool(argsJSON string) string {
 	}
 
 	// Extract image refs, save to ImageStore, strip from content
-	reportImageEntries, reportImageURLs := a.saveReportImages(args.Content)
+	reportImageEntries, _ := a.saveReportImages(args.Content)
 	cleanContent := stripMarkdownImages(args.Content)
+
+	// Collect ImageStore IDs
+	var imageIDs []string
+	for _, e := range reportImageEntries {
+		imageIDs = append(imageIDs, e.ID)
+	}
 
 	a.session.Records = append(a.session.Records, memory.Record{
 		Timestamp: time.Now(),
@@ -1372,12 +1376,12 @@ func (a *App) createReportTool(argsJSON string) string {
 		Images:    reportImageEntries,
 	})
 
-	// Emit report to frontend with images as separate data URLs
+	// Emit report with ImageStore IDs (not data URLs)
 	wailsRuntime.EventsEmit(a.ctx, "chat:report", map[string]any{
 		"title":    args.Title,
 		"filename": filename,
 		"content":  cleanContent,
-		"images":   reportImageURLs,
+		"imageIds": imageIDs,
 	})
 
 	return fmt.Sprintf("Report '%s' created and displayed to user.", args.Title)
@@ -1538,7 +1542,8 @@ func (a *App) resolveReportImages(content string) string {
 }
 
 // SaveReport is called from the frontend to save a displayed report with images.
-func (a *App) SaveReport(content, suggestedFilename string, imageDataURLs []string) error {
+// imageStoreIDs are ImageStore IDs — Go loads the images from disk directly.
+func (a *App) SaveReport(content, suggestedFilename string, imageStoreIDs []string) error {
 	path, err := wailsRuntime.SaveFileDialog(a.ctx, wailsRuntime.SaveDialogOptions{
 		Title:           "Save Report",
 		DefaultFilename: suggestedFilename,
@@ -1552,27 +1557,32 @@ func (a *App) SaveReport(content, suggestedFilename string, imageDataURLs []stri
 		return err
 	}
 
-	// Save images alongside the markdown file
-	dir := filepath.Dir(path)
+	// Embed images as inline base64 data URLs in the markdown
 	mdContent := content
-	for i, dataURL := range imageDataURLs {
-		if dataURL == "" {
+	for i, imgID := range imageStoreIDs {
+		if imgID == "" || a.images == nil {
 			continue
 		}
-		idx := strings.Index(dataURL, ",")
-		if idx < 0 {
+
+		// Find mime type from session records
+		mimeType := "image/png"
+		for _, r := range a.session.Records {
+			for _, img := range r.Images {
+				if img.ID == imgID {
+					mimeType = img.MimeType
+					break
+				}
+			}
+			if mimeType != "image/png" {
+				break
+			}
+		}
+
+		du, err := a.images.LoadAsDataURL(imgID, mimeType)
+		if err != nil {
 			continue
 		}
-		data, decErr := base64.StdEncoding.DecodeString(dataURL[idx+1:])
-		if decErr != nil {
-			continue
-		}
-		imgFilename := fmt.Sprintf("image_%d.png", i+1)
-		imgPath := filepath.Join(dir, imgFilename)
-		if writeErr := os.WriteFile(imgPath, data, 0o644); writeErr != nil {
-			continue
-		}
-		mdContent += fmt.Sprintf("\n\n![Image %d](%s)\n", i+1, imgFilename)
+		mdContent += fmt.Sprintf("\n\n![Image %d](%s)\n", i+1, du)
 	}
 
 	return os.WriteFile(path, []byte(mdContent), 0o644)

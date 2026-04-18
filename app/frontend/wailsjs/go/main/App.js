@@ -10,6 +10,10 @@ export function CancelExecution() {
   return window['go']['main']['App']['CancelExecution']();
 }
 
+export function CopyImageToClipboard(arg1) {
+  return window['go']['main']['App']['CopyImageToClipboard'](arg1);
+}
+
 export function DeletePinnedMemory(arg1) {
   return window['go']['main']['App']['DeletePinnedMemory'](arg1);
 }
@@ -72,6 +76,10 @@ export function RestartGuardians() {
 
 export function SaveConfig(arg1) {
   return window['go']['main']['App']['SaveConfig'](arg1);
+}
+
+export function SaveImageToFile(arg1) {
+  return window['go']['main']['App']['SaveImageToFile'](arg1);
 }
 
 export function SaveSidebarState(arg1, arg2) {

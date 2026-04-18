@@ -55,6 +55,9 @@ func (a *App) agentLoop(ctx context.Context, systemPrompt string, toolDefs []cli
 	al := newAgentLog()
 	defer al.close()
 
+	// Reset phase display for new turn
+	wailsRuntime.EventsEmit(a.ctx, "chat:phase", nil)
+
 	al.log("════════════════════════════════════════")
 	al.log("=== NEW TURN === tools=%d", len(toolDefs))
 	for _, t := range toolDefs {

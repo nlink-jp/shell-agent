@@ -1013,8 +1013,13 @@
   color: var(--text-error);
 }
 
+.guardian-buttons {
+  display: flex;
+  gap: 8px;
+}
+
 .guardian-add {
-  width: 100%;
+  flex: 1;
   padding: 8px;
   background: var(--bg-hover);
   border: 1px dashed var(--border-input);
@@ -1025,6 +1030,23 @@
 }
 
 .guardian-add:hover {
+  background: var(--bg-btn-primary);
+  color: var(--text-accent);
+  border-color: var(--border-accent);
+}
+
+.guardian-restart {
+  padding: 8px 16px;
+  background: var(--bg-hover);
+  border: 1px solid var(--border-input);
+  border-radius: 6px;
+  color: var(--text-secondary);
+  cursor: pointer;
+  font-size: 12px;
+  flex-shrink: 0;
+}
+
+.guardian-restart:hover {
   background: var(--bg-btn-primary);
   color: var(--text-accent);
   border-color: var(--border-accent);

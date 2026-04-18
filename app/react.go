@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/nlink-jp/nlk/jsonfix"
+	"github.com/nlink-jp/shell-agent/internal/objstore"
 	"github.com/nlink-jp/nlk/strip"
 	"github.com/nlink-jp/shell-agent/internal/client"
 	"github.com/nlink-jp/shell-agent/internal/config"
@@ -206,10 +207,10 @@ func (a *App) agentLoop(ctx context.Context, systemPrompt string, toolDefs []cli
 				}
 			}
 			var imageStoreID string
-			if imageDataURL != "" && a.images != nil {
-				id, mime, saveErr := a.images.Save(imageDataURL)
+			if imageDataURL != "" && a.objects != nil {
+				id, saveErr := a.objects.SaveDataURL(imageDataURL, objstore.TypeImage, "")
 				if saveErr == nil {
-					toolImages = append(toolImages, memory.ImageEntry{ID: id, MimeType: mime})
+					toolImages = append(toolImages, memory.ImageEntry{ID: id})
 					imageStoreID = id
 				}
 			}

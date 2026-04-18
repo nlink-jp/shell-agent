@@ -66,7 +66,7 @@ func New(dir string) (*Store, error) {
 
 // generateID creates a unique object ID.
 func generateID() string {
-	b := make([]byte, 12)
+	b := make([]byte, 6)
 	_, _ = rand.Read(b)
 	return hex.EncodeToString(b)
 }

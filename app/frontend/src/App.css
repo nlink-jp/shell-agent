@@ -359,6 +359,60 @@
   margin-top: 4px;
 }
 
+.bulk-bar {
+  display: flex;
+  gap: 6px;
+  padding: 4px 0;
+  margin-bottom: 4px;
+}
+
+.bulk-toggle {
+  background: none;
+  border: 1px solid var(--border-input);
+  color: var(--text-muted);
+  cursor: pointer;
+  font-size: 11px;
+  padding: 2px 8px;
+  border-radius: 3px;
+}
+
+.bulk-toggle:hover {
+  color: var(--text-accent);
+  border-color: var(--border-accent);
+}
+
+.bulk-delete {
+  background: rgba(200, 60, 60, 0.15);
+  border: 1px solid var(--border-msg-error);
+  color: var(--text-error);
+  cursor: pointer;
+  font-size: 11px;
+  padding: 2px 8px;
+  border-radius: 3px;
+}
+
+.bulk-delete:hover {
+  background: rgba(200, 60, 60, 0.3);
+}
+
+.session-checkbox,
+.pinned-checkbox {
+  flex-shrink: 0;
+  cursor: pointer;
+  accent-color: var(--accent-spinner);
+}
+
+.session-item.selected,
+.pinned-item.selected {
+  background: var(--bg-hover);
+}
+
+.pinned-header-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
 .empty {
   text-align: center;
   color: var(--text-very-dim);

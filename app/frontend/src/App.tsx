@@ -79,6 +79,15 @@ function App() {
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
+  // Apply theme on load and when settings change
+  useEffect(() => {
+    GetConfig().then((cfg: any) => {
+      if (cfg?.theme) {
+        document.documentElement.setAttribute('data-theme', cfg.theme);
+      }
+    });
+  }, []);
+
   useEffect(() => {
     GetTools().then(setTools);
     ListSessions().then((s) => setSessions(s || []));
@@ -320,6 +329,7 @@ function App() {
     if (!settings) return;
     try {
       await SaveConfig(JSON.stringify(settings));
+      document.documentElement.setAttribute('data-theme', settings.theme || 'dark');
       setShowSettings(false);
     } catch (err: any) {
       alert('Failed to save: ' + (err.message || err));
@@ -475,6 +485,22 @@ function App() {
               <button className="settings-close" onClick={() => setShowSettings(false)}>&#x2715;</button>
             </div>
             <div className="settings-body">
+              <div className="settings-section">
+                <h3>Appearance</h3>
+                <label>
+                  <span>Theme</span>
+                  <select value={settings.theme || 'dark'} onChange={e => {
+                    setSettings((prev: any) => ({ ...prev, theme: e.target.value }));
+                    document.documentElement.setAttribute('data-theme', e.target.value);
+                  }}>
+                    <option value="dark">Dark</option>
+                    <option value="light">Light</option>
+                    <option value="warm">Warm</option>
+                    <option value="midnight">Midnight</option>
+                  </select>
+                </label>
+              </div>
+
               <div className="settings-section">
                 <h3>API</h3>
                 <label>

@@ -19,6 +19,7 @@ type Config struct {
 	Tools     ToolsConfig      `json:"tools"`
 	Guardians []GuardianConfig `json:"guardians"`
 	Window    WindowConfig     `json:"window"`
+	Theme     string           `json:"theme"`
 }
 
 // WindowConfig holds window position and size.

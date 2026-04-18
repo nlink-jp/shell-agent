@@ -1041,6 +1041,9 @@
   border: 1px solid var(--border-mitl);
   border-radius: 10px;
   padding: 16px;
+  max-width: 100%;
+  overflow: hidden;
+  box-sizing: border-box;
 }
 
 .mitl-header {
@@ -1091,6 +1094,8 @@
   font-family: 'SF Mono', 'Menlo', monospace;
   font-size: 12px;
   overflow-x: auto;
+  white-space: pre-wrap;
+  word-break: break-all;
   color: var(--text-secondary);
 }
 

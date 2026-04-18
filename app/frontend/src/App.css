@@ -2,15 +2,15 @@
   display: flex;
   height: 100vh;
   font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-  color: #e0e0e0;
+  color: var(--text-primary);
   background: transparent;
 }
 
 /* Sidebar */
 .sidebar {
   width: 280px;
-  background: rgba(30, 30, 30, 0.95);
-  border-right: 1px solid rgba(255, 255, 255, 0.1);
+  background: var(--bg-sidebar);
+  border-right: 1px solid var(--border-primary);
   display: flex;
   flex-direction: column;
   --wails-draggable: drag;
@@ -19,7 +19,7 @@
 .sidebar-header {
   padding: 16px;
   padding-top: 40px;
-  border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+  border-bottom: 1px solid var(--border-primary);
 }
 
 .sidebar-header h2 {
@@ -33,38 +33,38 @@
   width: 100%;
   padding: 6px;
   margin-top: 6px;
-  background: rgba(255, 255, 255, 0.06);
-  border: 1px solid rgba(255, 255, 255, 0.12);
+  background: var(--bg-hover);
+  border: 1px solid var(--border-input);
   border-radius: 6px;
-  color: #999;
+  color: var(--text-muted);
   cursor: pointer;
   font-size: 12px;
 }
 
 .settings-btn:hover {
-  background: rgba(255, 255, 255, 0.1);
-  color: #ccc;
+  background: var(--bg-hover);
+  color: var(--text-secondary);
 }
 
 .new-chat-btn {
   --wails-draggable: no-drag;
   width: 100%;
   padding: 8px;
-  background: rgba(80, 120, 200, 0.3);
-  border: 1px solid rgba(80, 120, 200, 0.5);
+  background: var(--bg-btn-primary);
+  border: 1px solid var(--border-accent);
   border-radius: 6px;
-  color: #c0d0f0;
+  color: var(--text-accent);
   cursor: pointer;
   font-size: 13px;
 }
 
 .new-chat-btn:hover {
-  background: rgba(80, 120, 200, 0.5);
+  background: var(--bg-btn-primary-hover);
 }
 
 .sidebar-tabs {
   display: flex;
-  border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+  border-bottom: 1px solid var(--border-primary);
   --wails-draggable: no-drag;
 }
 
@@ -74,14 +74,14 @@
   background: none;
   border: none;
   border-bottom: 2px solid transparent;
-  color: #888;
+  color: var(--text-muted);
   cursor: pointer;
   font-size: 12px;
 }
 
 .sidebar-tabs button.active {
-  color: #c0d0f0;
-  border-bottom-color: #5078c8;
+  color: var(--text-accent);
+  border-bottom-color: var(--accent-spinner);
 }
 
 .sidebar-content {
@@ -104,7 +104,7 @@
 }
 
 .session-item:hover {
-  background: rgba(255, 255, 255, 0.08);
+  background: var(--bg-hover);
 }
 
 .session-info {
@@ -126,7 +126,7 @@
 
 .session-date {
   font-size: 11px;
-  color: #666;
+  color: var(--text-dim);
   flex-shrink: 0;
   margin-left: 8px;
 }
@@ -135,10 +135,10 @@
   flex: 1;
   min-width: 0;
   padding: 2px 6px;
-  background: rgba(255, 255, 255, 0.1);
-  border: 1px solid rgba(80, 120, 200, 0.5);
+  background: var(--bg-inline-code);
+  border: 1px solid var(--border-accent);
   border-radius: 4px;
-  color: #e0e0e0;
+  color: var(--text-primary);
   font-size: 13px;
   font-family: inherit;
   outline: none;
@@ -150,7 +150,7 @@
   height: 24px;
   border: none;
   background: none;
-  color: #555;
+  color: var(--text-very-dim);
   cursor: pointer;
   font-size: 12px;
   border-radius: 4px;
@@ -166,15 +166,15 @@
 }
 
 .session-delete:hover {
-  background: rgba(200, 60, 60, 0.3);
-  color: #f08080;
+  background: var(--bg-msg-error);
+  color: var(--text-error);
 }
 
 .delete-confirm {
   margin: 8px;
   padding: 10px 12px;
-  background: rgba(200, 60, 60, 0.15);
-  border: 1px solid rgba(200, 60, 60, 0.3);
+  background: var(--bg-msg-error);
+  border: 1px solid var(--border-msg-error);
   border-radius: 6px;
   font-size: 13px;
 }
@@ -182,7 +182,7 @@
 .delete-confirm span {
   display: block;
   margin-bottom: 8px;
-  color: #e08080;
+  color: var(--text-error);
 }
 
 .delete-confirm-actions {
@@ -192,30 +192,30 @@
 
 .delete-yes {
   padding: 4px 12px;
-  background: rgba(200, 60, 60, 0.3);
-  border: 1px solid rgba(200, 60, 60, 0.5);
+  background: var(--bg-msg-error);
+  border: 1px solid var(--border-msg-error);
   border-radius: 4px;
-  color: #f08080;
+  color: var(--text-error);
   cursor: pointer;
   font-size: 12px;
 }
 
 .delete-yes:hover {
-  background: rgba(200, 60, 60, 0.5);
+  opacity: 0.8;
 }
 
 .delete-no {
   padding: 4px 12px;
-  background: rgba(255, 255, 255, 0.08);
-  border: 1px solid rgba(255, 255, 255, 0.15);
+  background: var(--bg-hover);
+  border: 1px solid var(--border-input);
   border-radius: 4px;
-  color: #aaa;
+  color: var(--text-secondary);
   cursor: pointer;
   font-size: 12px;
 }
 
 .delete-no:hover {
-  background: rgba(255, 255, 255, 0.15);
+  opacity: 0.8;
 }
 
 /* Tools */
@@ -225,7 +225,7 @@
 
 .tool-item {
   padding: 10px 12px;
-  border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+  border-bottom: 1px solid var(--border-primary);
 }
 
 .tool-name {
@@ -243,7 +243,7 @@
 
 .tool-category.read {
   background: rgba(80, 180, 80, 0.2);
-  color: #80c080;
+  color: var(--text-tool);
 }
 
 .tool-category.write,
@@ -254,12 +254,12 @@
 
 .tool-category.mcp {
   background: rgba(120, 80, 200, 0.2);
-  color: #b090e0;
+  color: var(--text-mcp);
 }
 
 .tool-desc {
   font-size: 12px;
-  color: #888;
+  color: var(--text-muted);
   margin: 4px 0 0 0;
 }
 
@@ -272,17 +272,17 @@
   display: flex;
   justify-content: space-between;
   padding: 8px 0;
-  border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+  border-bottom: 1px solid var(--border-primary);
   font-size: 13px;
 }
 
 .status-item label {
-  color: #888;
+  color: var(--text-muted);
 }
 
 .empty {
   text-align: center;
-  color: #555;
+  color: var(--text-very-dim);
   font-size: 13px;
   padding: 20px;
 }
@@ -292,7 +292,7 @@
   flex: 1;
   display: flex;
   flex-direction: column;
-  background: rgba(20, 20, 20, 0.9);
+  background: var(--bg-primary);
 }
 
 .drag-handle {
@@ -332,12 +332,12 @@
   font-size: 11px;
   font-weight: 600;
   text-transform: uppercase;
-  color: #666;
+  color: var(--text-dim);
 }
 
 .message-time {
   font-size: 11px;
-  color: #555;
+  color: var(--text-very-dim);
 }
 
 .message-content {
@@ -349,13 +349,13 @@
 }
 
 .message.user .message-content {
-  background: rgba(80, 120, 200, 0.25);
-  border: 1px solid rgba(80, 120, 200, 0.3);
+  background: var(--bg-msg-user);
+  border: 1px solid var(--border-msg-user);
 }
 
 .message.assistant .message-content {
-  background: rgba(60, 60, 60, 0.6);
-  border: 1px solid rgba(255, 255, 255, 0.08);
+  background: var(--bg-msg-assistant);
+  border: 1px solid var(--border-msg-assistant);
 }
 
 .message.tool {
@@ -364,19 +364,19 @@
 }
 
 .message.tool .message-role {
-  color: #80c080;
+  color: var(--text-tool);
 }
 
 .message.tool .message-content {
-  background: rgba(40, 80, 40, 0.2);
-  border: 1px solid rgba(80, 180, 80, 0.2);
+  background: var(--bg-msg-tool);
+  border: 1px solid var(--border-msg-tool);
   font-size: 13px;
 }
 
 .message.error .message-content {
-  background: rgba(200, 60, 60, 0.2);
-  border: 1px solid rgba(200, 60, 60, 0.3);
-  color: #f08080;
+  background: var(--bg-msg-error);
+  border: 1px solid var(--border-msg-error);
+  color: var(--text-error);
 }
 
 .message-images {
@@ -390,13 +390,13 @@
   max-width: 240px;
   max-height: 180px;
   border-radius: 8px;
-  border: 1px solid rgba(255, 255, 255, 0.1);
+  border: 1px solid var(--border-primary);
   object-fit: contain;
   cursor: pointer;
 }
 
 .message-image:hover {
-  border-color: rgba(80, 120, 200, 0.5);
+  border-color: var(--border-accent);
 }
 
 /* Lightbox */
@@ -459,14 +459,14 @@
   display: inline-block;
   width: 16px;
   height: 16px;
-  border: 2px solid rgba(255, 255, 255, 0.15);
-  border-top-color: #5078c8;
+  border: 2px solid var(--border-input);
+  border-top-color: var(--accent-spinner);
   border-radius: 50%;
   animation: spin 0.8s linear infinite;
 }
 
 .thinking-text {
-  color: #888;
+  color: var(--text-muted);
   font-size: 13px;
 }
 
@@ -503,7 +503,7 @@
 }
 
 .markdown-body code {
-  background: rgba(255, 255, 255, 0.1);
+  background: var(--bg-inline-code);
   padding: 2px 5px;
   border-radius: 3px;
   font-size: 0.9em;
@@ -511,8 +511,8 @@
 }
 
 .markdown-body pre {
-  background: rgba(0, 0, 0, 0.4);
-  border: 1px solid rgba(255, 255, 255, 0.1);
+  background: var(--bg-code);
+  border: 1px solid var(--border-primary);
   border-radius: 6px;
   padding: 12px;
   margin: 8px 0;
@@ -526,10 +526,10 @@
 }
 
 .markdown-body blockquote {
-  border-left: 3px solid rgba(80, 120, 200, 0.5);
+  border-left: 3px solid var(--border-accent);
   margin: 8px 0;
   padding: 4px 12px;
-  color: #aaa;
+  color: var(--text-secondary);
 }
 
 .markdown-body table {
@@ -539,19 +539,19 @@
 }
 
 .markdown-body th, .markdown-body td {
-  border: 1px solid rgba(255, 255, 255, 0.15);
+  border: 1px solid var(--border-input);
   padding: 6px 10px;
   text-align: left;
   font-size: 0.9em;
 }
 
 .markdown-body th {
-  background: rgba(255, 255, 255, 0.08);
+  background: var(--bg-hover);
   font-weight: 600;
 }
 
 .markdown-body a {
-  color: #6090d0;
+  color: var(--text-link);
   text-decoration: none;
 }
 
@@ -561,7 +561,7 @@
 
 .markdown-body hr {
   border: none;
-  border-top: 1px solid rgba(255, 255, 255, 0.15);
+  border-top: 1px solid var(--border-input);
   margin: 12px 0;
 }
 
@@ -569,13 +569,13 @@
 .pinned-list {
   margin-top: 12px;
   padding-top: 8px;
-  border-top: 1px solid rgba(255, 255, 255, 0.1);
+  border-top: 1px solid var(--border-primary);
 }
 
 .pinned-header {
   font-size: 12px;
   font-weight: 600;
-  color: #888;
+  color: var(--text-muted);
   display: block;
   margin-bottom: 8px;
 }
@@ -594,7 +594,7 @@
   border-radius: 3px;
   flex-shrink: 0;
   background: rgba(120, 80, 200, 0.2);
-  color: #b090e0;
+  color: var(--text-mcp);
 }
 
 .pinned-category.preference {
@@ -604,24 +604,24 @@
 
 .pinned-category.decision {
   background: rgba(200, 160, 40, 0.2);
-  color: #e0c060;
+  color: var(--text-mitl);
 }
 
 .pinned-category.fact {
   background: rgba(80, 180, 80, 0.2);
-  color: #80c080;
+  color: var(--text-tool);
 }
 
 .pinned-fact {
-  color: #bbb;
+  color: var(--text-secondary);
   line-height: 1.3;
 }
 
 /* MITL Approval Dialog */
 .mitl-dialog {
   margin: 16px 0;
-  background: rgba(50, 40, 20, 0.8);
-  border: 1px solid rgba(220, 160, 40, 0.5);
+  background: var(--bg-mitl);
+  border: 1px solid var(--border-mitl);
   border-radius: 10px;
   padding: 16px;
 }
@@ -632,7 +632,7 @@
   gap: 8px;
   font-size: 14px;
   font-weight: 600;
-  color: #e0b040;
+  color: var(--text-mitl);
   margin-bottom: 12px;
 }
 
@@ -653,28 +653,28 @@
 
 .mitl-label {
   font-size: 12px;
-  color: #888;
+  color: var(--text-muted);
   min-width: 70px;
 }
 
 .mitl-tool-name code {
   font-family: 'SF Mono', 'Menlo', monospace;
   font-size: 13px;
-  background: rgba(255, 255, 255, 0.1);
+  background: var(--bg-inline-code);
   padding: 2px 6px;
   border-radius: 3px;
 }
 
 .mitl-args pre {
-  background: rgba(0, 0, 0, 0.3);
-  border: 1px solid rgba(255, 255, 255, 0.1);
+  background: var(--bg-code);
+  border: 1px solid var(--border-primary);
   border-radius: 6px;
   padding: 10px;
   margin: 6px 0 0 0;
   font-family: 'SF Mono', 'Menlo', monospace;
   font-size: 12px;
   overflow-x: auto;
-  color: #ccc;
+  color: var(--text-secondary);
 }
 
 .mitl-actions {
@@ -702,7 +702,7 @@
   background: rgba(160, 50, 50, 0.3);
   border: 1px solid rgba(160, 50, 50, 0.5);
   border-radius: 6px;
-  color: #e08080;
+  color: var(--text-error);
   cursor: pointer;
   font-size: 13px;
   font-weight: 600;
@@ -725,7 +725,7 @@
   justify-content: space-between;
   align-items: center;
   padding: 16px 20px;
-  border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+  border-bottom: 1px solid var(--border-primary);
 }
 
 .settings-header h2 {
@@ -737,14 +737,14 @@
 .settings-close {
   background: none;
   border: none;
-  color: #888;
+  color: var(--text-muted);
   font-size: 18px;
   cursor: pointer;
   padding: 4px;
 }
 
 .settings-close:hover {
-  color: #ccc;
+  color: var(--text-secondary);
 }
 
 .settings-body {
@@ -760,12 +760,12 @@
 .settings-section h3 {
   font-size: 13px;
   font-weight: 600;
-  color: #888;
+  color: var(--text-muted);
   text-transform: uppercase;
   letter-spacing: 0.5px;
   margin: 0 0 12px 0;
   padding-bottom: 6px;
-  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+  border-bottom: 1px solid var(--border-primary);
 }
 
 .settings-section label {
@@ -778,26 +778,33 @@
 
 .settings-section label span {
   min-width: 140px;
-  color: #aaa;
+  color: var(--text-secondary);
   flex-shrink: 0;
 }
 
 .settings-section input[type="text"],
 .settings-section input[type="password"],
-.settings-section input[type="number"] {
+.settings-section input[type="number"],
+.settings-section select {
   flex: 1;
   padding: 7px 10px;
-  background: rgba(40, 40, 40, 0.8);
-  border: 1px solid rgba(255, 255, 255, 0.15);
+  background: var(--bg-input-field);
+  border: 1px solid var(--border-input);
   border-radius: 6px;
-  color: #e0e0e0;
+  color: var(--text-primary);
   font-size: 13px;
   font-family: 'SF Mono', 'Menlo', monospace;
 }
 
-.settings-section input:focus {
+.settings-section select {
+  font-family: inherit;
+  cursor: pointer;
+}
+
+.settings-section input:focus,
+.settings-section select:focus {
   outline: none;
-  border-color: rgba(80, 120, 200, 0.5);
+  border-color: var(--border-accent);
 }
 
 .settings-footer {
@@ -805,44 +812,44 @@
   gap: 10px;
   justify-content: flex-end;
   padding: 16px 20px;
-  border-top: 1px solid rgba(255, 255, 255, 0.1);
+  border-top: 1px solid var(--border-primary);
 }
 
 .settings-save {
   padding: 8px 24px;
-  background: rgba(80, 120, 200, 0.4);
-  border: 1px solid rgba(80, 120, 200, 0.5);
+  background: var(--bg-btn-primary);
+  border: 1px solid var(--border-accent);
   border-radius: 6px;
-  color: #c0d0f0;
+  color: var(--text-accent);
   cursor: pointer;
   font-size: 13px;
   font-weight: 600;
 }
 
 .settings-save:hover {
-  background: rgba(80, 120, 200, 0.6);
+  background: var(--bg-btn-primary-hover);
 }
 
 .settings-cancel {
   padding: 8px 24px;
-  background: rgba(255, 255, 255, 0.08);
-  border: 1px solid rgba(255, 255, 255, 0.15);
+  background: var(--bg-hover);
+  border: 1px solid var(--border-input);
   border-radius: 6px;
-  color: #aaa;
+  color: var(--text-secondary);
   cursor: pointer;
   font-size: 13px;
 }
 
 .settings-cancel:hover {
-  background: rgba(255, 255, 255, 0.15);
+  opacity: 0.8;
 }
 
 /* Guardian entries */
 .guardian-entry {
   margin-bottom: 16px;
   padding: 12px;
-  background: rgba(255, 255, 255, 0.03);
-  border: 1px solid rgba(255, 255, 255, 0.08);
+  background: var(--bg-hover);
+  border: 1px solid var(--border-primary);
   border-radius: 6px;
 }
 
@@ -856,41 +863,43 @@
 .guardian-name {
   font-size: 13px;
   font-weight: 600;
-  color: #b090e0;
+  color: var(--text-mcp);
 }
 
 .guardian-remove {
   background: none;
   border: none;
-  color: #666;
+  color: var(--text-dim);
   cursor: pointer;
   font-size: 14px;
 }
 
 .guardian-remove:hover {
-  color: #f08080;
+  color: var(--text-error);
 }
 
 .guardian-add {
   width: 100%;
   padding: 8px;
-  background: rgba(120, 80, 200, 0.15);
-  border: 1px dashed rgba(120, 80, 200, 0.3);
+  background: var(--bg-hover);
+  border: 1px dashed var(--border-input);
   border-radius: 6px;
-  color: #b090e0;
+  color: var(--text-secondary);
   cursor: pointer;
   font-size: 12px;
 }
 
 .guardian-add:hover {
-  background: rgba(120, 80, 200, 0.25);
+  background: var(--bg-btn-primary);
+  color: var(--text-accent);
+  border-color: var(--border-accent);
 }
 
 /* Input area */
 .input-area {
   padding: 12px 20px 16px;
-  border-top: 1px solid rgba(255, 255, 255, 0.1);
-  background: rgba(25, 25, 25, 0.95);
+  border-top: 1px solid var(--border-primary);
+  background: var(--bg-input);
 }
 
 .input-row {
@@ -902,7 +911,7 @@
 .attach-btn {
   padding: 8px;
   background: none;
-  border: 1px solid rgba(255, 255, 255, 0.15);
+  border: 1px solid var(--border-input);
   border-radius: 8px;
   cursor: pointer;
   font-size: 16px;
@@ -911,7 +920,7 @@
 }
 
 .attach-btn:hover:not(:disabled) {
-  background: rgba(255, 255, 255, 0.08);
+  background: var(--bg-hover);
 }
 
 .attach-btn:disabled {
@@ -933,7 +942,7 @@
   height: 64px;
   border-radius: 6px;
   overflow: hidden;
-  border: 1px solid rgba(255, 255, 255, 0.15);
+  border: 1px solid var(--border-input);
 }
 
 .pending-image img {
@@ -968,10 +977,10 @@
   flex: 1;
   resize: none;
   padding: 10px 14px;
-  background: rgba(40, 40, 40, 0.8);
-  border: 1px solid rgba(255, 255, 255, 0.15);
+  background: var(--bg-input-field);
+  border: 1px solid var(--border-input);
   border-radius: 8px;
-  color: #e0e0e0;
+  color: var(--text-primary);
   font-size: 14px;
   font-family: inherit;
   line-height: 1.4;
@@ -979,7 +988,7 @@
 
 .input-area textarea:focus {
   outline: none;
-  border-color: rgba(80, 120, 200, 0.5);
+  border-color: var(--border-accent);
 }
 
 .input-area textarea:disabled {
@@ -988,17 +997,17 @@
 
 .input-area button {
   padding: 10px 20px;
-  background: rgba(80, 120, 200, 0.4);
-  border: 1px solid rgba(80, 120, 200, 0.5);
+  background: var(--bg-btn-primary);
+  border: 1px solid var(--border-accent);
   border-radius: 8px;
-  color: #c0d0f0;
+  color: var(--text-accent);
   cursor: pointer;
   font-size: 14px;
   align-self: flex-end;
 }
 
 .input-area button:hover:not(:disabled) {
-  background: rgba(80, 120, 200, 0.6);
+  background: var(--bg-btn-primary-hover);
 }
 
 .input-area button:disabled {

@@ -84,6 +84,9 @@ export namespace config {
 	    tools: ToolsConfig;
 	    guardians: GuardianConfig[];
 	    window: WindowConfig;
+	    theme: string;
+	    startup_mode: string;
+	    last_session: string;
 	
 	    static createFrom(source: any = {}) {
 	        return new Config(source);
@@ -96,6 +99,9 @@ export namespace config {
 	        this.tools = this.convertValues(source["tools"], ToolsConfig);
 	        this.guardians = this.convertValues(source["guardians"], GuardianConfig);
 	        this.window = this.convertValues(source["window"], WindowConfig);
+	        this.theme = source["theme"];
+	        this.startup_mode = source["startup_mode"];
+	        this.last_session = source["last_session"];
 	    }
 	
 		convertValues(a: any, classs: any, asMap: boolean = false): any {

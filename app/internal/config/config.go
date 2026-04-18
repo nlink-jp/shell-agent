@@ -18,8 +18,10 @@ type Config struct {
 	Memory    MemoryConfig     `json:"memory"`
 	Tools     ToolsConfig      `json:"tools"`
 	Guardians []GuardianConfig `json:"guardians"`
-	Window    WindowConfig     `json:"window"`
-	Theme     string           `json:"theme"`
+	Window      WindowConfig     `json:"window"`
+	Theme       string           `json:"theme"`
+	StartupMode string           `json:"startup_mode"` // "new" or "last"
+	LastSession string           `json:"last_session"`
 }
 
 // WindowConfig holds window position and size.

@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"log"
 	"os"
@@ -18,7 +17,7 @@ import (
 	wailsRuntime "github.com/wailsapp/wails/v2/pkg/runtime"
 )
 
-// agentLog provides structured logging for the ReAct loop.
+// agentLog provides structured logging for the agent loop.
 type agentLog struct {
 	logger *log.Logger
 	file   *os.File
@@ -31,7 +30,7 @@ func newAgentLog() *agentLog {
 
 	f, err := os.OpenFile(logPath, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o644)
 	if err != nil {
-		return &agentLog{logger: log.New(os.Stderr, "[react] ", log.LstdFlags)}
+		return &agentLog{logger: log.New(os.Stderr, "[agent] ", log.LstdFlags)}
 	}
 	return &agentLog{
 		logger: log.New(f, "", log.LstdFlags),
@@ -49,72 +48,36 @@ func (l *agentLog) log(format string, args ...any) {
 	l.logger.Printf(format, args...)
 }
 
-func (l *agentLog) separator() {
-	l.logger.Println("────────────────────────────────────────")
-}
-
-// Plan represents a structured execution plan from the planning phase.
-type Plan struct {
-	Goal  string     `json:"goal"`
-	Steps []PlanStep `json:"steps"`
-}
-
-// PlanStep is one step in the plan.
-type PlanStep struct {
-	Step        int    `json:"step"`
-	Description string `json:"description"`
-	Tool        string `json:"tool"`
-	Reason      string `json:"reason"`
-}
-
-// reactLoop orchestrates the Plan → Execute → Summarize phases.
-func (a *App) reactLoop(ctx context.Context, systemPrompt string, toolDefs []client.Tool) (ChatMessage, error) {
+// agentLoop runs a simple tool-calling feedback loop.
+// LLM is called with tools → if tool calls, execute → feed back → repeat.
+// Loop ends when LLM returns text (no tool calls) or max rounds reached.
+func (a *App) agentLoop(ctx context.Context, systemPrompt string, toolDefs []client.Tool) (ChatMessage, error) {
 	al := newAgentLog()
 	defer al.close()
 
-	al.separator()
+	al.log("════════════════════════════════════════")
 	al.log("=== NEW TURN === tools=%d", len(toolDefs))
-
-	// Phase 1: Plan
-	var plan *Plan
-	if len(toolDefs) > 0 {
-		al.log("[PLAN] starting")
-		wailsRuntime.EventsEmit(a.ctx, "chat:phase", "plan")
-		var err error
-		plan, err = a.planPhase(ctx, toolDefs)
-		if err != nil {
-			al.log("[PLAN] error: %v", err)
-		} else {
-			planJSON, _ := json.Marshal(plan)
-			al.log("[PLAN] result: %s", string(planJSON))
-			wailsRuntime.EventsEmit(a.ctx, "chat:plan", plan)
-		}
-	} else {
-		al.log("[PLAN] skipped (no tools)")
+	for _, t := range toolDefs {
+		al.log("  tool: %s", t.Function.Name)
 	}
 
-	// Phase 2: Execute
-	al.log("[EXECUTE] starting")
-	wailsRuntime.EventsEmit(a.ctx, "chat:phase", "execute")
-	toolsUsed, err := a.executePhase(ctx, systemPrompt, plan, toolDefs, al)
-	if err != nil {
-		al.log("[EXECUTE] error: %v", err)
+	maxRounds := a.cfg.Memory.MaxToolRounds
+	if maxRounds <= 0 {
+		maxRounds = 10
+	}
+
+	for round := 0; round < maxRounds; round++ {
 		if ctx.Err() != nil {
 			return ChatMessage{
 				Role: "assistant", Content: "(Cancelled)",
 				Timestamp: time.Now().Format("15:04:05"),
 			}, nil
 		}
-		return ChatMessage{}, err
-	}
 
-	al.log("[EXECUTE] done, toolsUsed=%v", toolsUsed)
+		messages := a.buildMessages(systemPrompt)
+		al.log("[ROUND %d] messages=%d tools=%d", round, len(messages), len(toolDefs))
 
-	// Phase 3: Summarize (only if tools were used)
-	if toolsUsed {
-		al.log("[SUMMARIZE] starting")
-		wailsRuntime.EventsEmit(a.ctx, "chat:phase", "summarize")
-		content, err := a.summarizePhase(ctx, systemPrompt)
+		resp, err := a.llm.ChatWithContext(ctx, messages, toolDefs)
 		if err != nil {
 			if ctx.Err() != nil {
 				return ChatMessage{
@@ -122,201 +85,8 @@ func (a *App) reactLoop(ctx context.Context, systemPrompt string, toolDefs []cli
 					Timestamp: time.Now().Format("15:04:05"),
 				}, nil
 			}
+			al.log("[ROUND %d] error: %v", round, err)
 			return ChatMessage{}, err
-		}
-
-		al.log("[SUMMARIZE] content length=%d", len(content))
-		usedFallback := false
-		// If summarize returned empty, use the last interim summary
-		if content == "" {
-			content = a.lastInterimSummary()
-			usedFallback = true
-			al.log("[SUMMARIZE] fallback to interim, length=%d", len(content))
-		}
-
-		// Only add to records if not a fallback (interim is already in records)
-		if content != "" && !usedFallback {
-			respTime := time.Now()
-			a.session.Records = append(a.session.Records, memory.Record{
-				Timestamp: respTime,
-				Role:      "assistant",
-				Content:   content,
-				Tier:      memory.TierHot,
-				InTokens:  a.tokenStats.LastInput,
-				OutTokens: a.tokenStats.LastOutput,
-			})
-			a.session.UpdatedAt = respTime
-		}
-
-		wailsRuntime.EventsEmit(a.ctx, "chat:phase", nil)
-
-		return ChatMessage{
-			Role:      "assistant",
-			Content:   content,
-			Timestamp: time.Now().Format("15:04:05"),
-			InTokens:  a.tokenStats.LastInput,
-			OutTokens: a.tokenStats.LastOutput,
-		}, nil
-	}
-
-	// No tools used — the execute phase already stored the final text response
-	wailsRuntime.EventsEmit(a.ctx, "chat:phase", nil)
-
-	// Find the last assistant record
-	for i := len(a.session.Records) - 1; i >= 0; i-- {
-		r := a.session.Records[i]
-		if r.Role == "assistant" && r.Tier == memory.TierHot {
-			return ChatMessage{
-				Role:      "assistant",
-				Content:   r.Content,
-				Timestamp: r.Timestamp.Format("15:04:05"),
-				InTokens:  r.InTokens,
-				OutTokens: r.OutTokens,
-			}, nil
-		}
-	}
-
-	return ChatMessage{
-		Role: "assistant", Content: "",
-		Timestamp: time.Now().Format("15:04:05"),
-	}, nil
-}
-
-// planPhase generates a structured execution plan.
-func (a *App) planPhase(ctx context.Context, toolDefs []client.Tool) (*Plan, error) {
-	// Build tool list description
-	var toolDescs []string
-	for _, t := range toolDefs {
-		toolDescs = append(toolDescs, fmt.Sprintf("- %s: %s", t.Function.Name, t.Function.Description))
-	}
-
-	// Get the last user message
-	var userMsg string
-	for i := len(a.session.Records) - 1; i >= 0; i-- {
-		if a.session.Records[i].Role == "user" && a.session.Records[i].Tier == memory.TierHot {
-			userMsg = a.session.Records[i].Content
-			break
-		}
-	}
-
-	prompt := []client.Message{
-		client.TextMessage("system", `Given the user's request and available tools, create a brief execution plan.
-Respond with ONLY valid JSON, no other text:
-{"goal": "brief goal description", "steps": [{"step": 1, "description": "what to do", "tool": "tool_name or null", "reason": "why"}]}
-
-If no tools are needed (simple question/conversation), respond:
-{"goal": "answer directly", "steps": [{"step": 1, "description": "respond to user", "tool": null, "reason": "no tools needed"}]}
-
-Available tools:
-`+strings.Join(toolDescs, "\n")),
-		client.TextMessage("user", userMsg),
-	}
-
-	resp, err := a.llm.ChatWithContext(ctx, prompt, nil)
-	if err != nil {
-		return nil, err
-	}
-
-	if len(resp.Choices) == 0 {
-		return nil, fmt.Errorf("empty response")
-	}
-
-	return parsePlan(resp.Choices[0].Message.Content, userMsg)
-}
-
-// parsePlan extracts a Plan from LLM output, with fallback.
-func parsePlan(text, userGoal string) (*Plan, error) {
-	text = strings.TrimSpace(text)
-
-	// Try to find JSON in the response
-	start := strings.Index(text, "{")
-	end := strings.LastIndex(text, "}")
-	if start >= 0 && end > start {
-		jsonStr := text[start : end+1]
-		var plan Plan
-		if err := json.Unmarshal([]byte(jsonStr), &plan); err == nil && len(plan.Steps) > 0 {
-			return &plan, nil
-		}
-	}
-
-	// Fallback: single step plan
-	return &Plan{
-		Goal: userGoal,
-		Steps: []PlanStep{
-			{Step: 1, Description: "Respond to user request", Tool: "", Reason: "fallback plan"},
-		},
-	}, nil
-}
-
-// planHasMoreToolSteps checks if the plan has remaining tool steps after the given round.
-func planHasMoreToolSteps(plan *Plan, completedRounds int) bool {
-	if plan == nil {
-		return false
-	}
-	toolStepCount := 0
-	for _, s := range plan.Steps {
-		if s.Tool != "" && s.Tool != "null" {
-			toolStepCount++
-		}
-	}
-	return completedRounds < toolStepCount
-}
-
-// planNeedsTools returns true if the plan suggests using any tools.
-func planNeedsTools(plan *Plan) bool {
-	if plan == nil {
-		return false
-	}
-	for _, s := range plan.Steps {
-		if s.Tool != "" && s.Tool != "null" {
-			return true
-		}
-	}
-	return false
-}
-
-// executePhase runs the ReAct loop. Returns true if any tools were used.
-func (a *App) executePhase(ctx context.Context, systemPrompt string, plan *Plan, toolDefs []client.Tool, al *agentLog) (bool, error) {
-	maxRounds := a.cfg.Memory.MaxToolRounds
-	if maxRounds <= 0 {
-		maxRounds = 10
-	}
-
-	// Inject plan hints into system prompt if plan exists and suggests tools
-	execPrompt := systemPrompt
-	if planNeedsTools(plan) {
-		var hints []string
-		for _, s := range plan.Steps {
-			if s.Tool != "" && s.Tool != "null" {
-				hints = append(hints, fmt.Sprintf("Step %d: %s (tool: %s)", s.Step, s.Description, s.Tool))
-			}
-		}
-		execPrompt += "\n\nSuggested plan:\n" + strings.Join(hints, "\n") +
-			"\nFollow this plan by calling the appropriate tools. Do NOT describe what you will do — call the tool directly."
-	}
-
-	toolsUsed := false
-	toolRoundsCompleted := 0
-	emptyResponseCount := 0
-
-	for round := 0; round < maxRounds; round++ {
-		al.log("[EXECUTE] round=%d", round)
-		if ctx.Err() != nil {
-			return toolsUsed, ctx.Err()
-		}
-
-		messages := a.buildMessagesWithPrompt(execPrompt)
-		al.log("[EXECUTE] messages=%d, tools=%d", len(messages), len(toolDefs))
-
-		// Determine whether to include tools
-		var currentTools []client.Tool
-		if round < maxRounds {
-			currentTools = toolDefs
-		}
-
-		resp, err := a.llm.ChatWithContext(ctx, messages, currentTools)
-		if err != nil {
-			return toolsUsed, err
 		}
 
 		// Track tokens
@@ -326,50 +96,44 @@ func (a *App) executePhase(ctx context.Context, systemPrompt string, plan *Plan,
 		a.tokenStats.TotalOutput += resp.Usage.CompletionTokens
 
 		if len(resp.Choices) == 0 {
-			return toolsUsed, fmt.Errorf("empty response")
+			al.log("[ROUND %d] empty choices", round)
+			continue
 		}
 
 		choice := resp.Choices[0]
-		assistantContent := strip.ThinkTags(choice.Message.Content)
-		assistantContent = stripLeakedTimestamps(assistantContent)
+		content := strip.ThinkTags(choice.Message.Content)
+		content = stripLeakedTimestamps(content)
 
-		al.log("[EXECUTE] LLM response: tool_calls=%d, content_len=%d", len(choice.Message.ToolCalls), len(assistantContent))
-		if len(choice.Message.ToolCalls) > 0 {
-			for _, tc := range choice.Message.ToolCalls {
-				al.log("[EXECUTE]   API tool_call: %s(%s)", tc.Function.Name, tc.Function.Arguments[:min(100, len(tc.Function.Arguments))])
-			}
-		}
+		al.log("[ROUND %d] tool_calls=%d content_len=%d", round, len(choice.Message.ToolCalls), len(content))
 
-		// Check for gemma-style text-based tool calls: <|tool_call>call:name{args}<tool_call|>
+		// Check for gemma-style text-based tool calls
 		if len(choice.Message.ToolCalls) == 0 {
-			if parsed := parseGemmaToolCalls(assistantContent); len(parsed) > 0 {
-				al.log("[EXECUTE]   gemma tags detected: %d tool calls", len(parsed))
+			if parsed := parseGemmaToolCalls(content); len(parsed) > 0 {
+				al.log("[ROUND %d] gemma tags: %d tool calls", round, len(parsed))
 				for _, tc := range parsed {
-					al.log("[EXECUTE]   gemma tool_call: %s(%s)", tc.Function.Name, tc.Function.Arguments[:min(100, len(tc.Function.Arguments))])
+					al.log("[ROUND %d]   gemma: %s(%s)", round, tc.Function.Name, truncate(tc.Function.Arguments, 100))
 				}
 				choice.Message.ToolCalls = parsed
-				// Remove tool call tags from displayed text
-				assistantContent = stripGemmaToolCallTags(assistantContent)
+				content = stripGemmaToolCallTags(content)
+			}
+		} else {
+			for _, tc := range choice.Message.ToolCalls {
+				al.log("[ROUND %d]   API: %s(%s)", round, tc.Function.Name, truncate(tc.Function.Arguments, 100))
 			}
 		}
 
-		assistantContent = stripFakeToolCalls(assistantContent)
-		assistantContent = a.resolveLocalImages(assistantContent)
+		content = stripFakeToolCalls(content)
+		content = a.resolveLocalImages(content)
 
-		// No tool calls — this is a text response
+		// No tool calls → final text response
 		if len(choice.Message.ToolCalls) == 0 {
-			content := strings.TrimSpace(assistantContent)
+			content = strings.TrimSpace(content)
 			if content == "" {
-				emptyResponseCount++
-				if emptyResponseCount >= 2 || !planHasMoreToolSteps(plan, toolRoundsCompleted) {
-					al.log("[EXECUTE] empty response (count=%d), breaking", emptyResponseCount)
-					break
-				}
-				al.log("[EXECUTE] empty response but plan has more steps, retrying")
+				al.log("[ROUND %d] empty text, continuing", round)
 				continue
 			}
-			emptyResponseCount = 0
 
+			al.log("[ROUND %d] final text response (%d chars)", round, len(content))
 			respTime := time.Now()
 			a.session.Records = append(a.session.Records, memory.Record{
 				Timestamp: respTime,
@@ -381,51 +145,41 @@ func (a *App) executePhase(ctx context.Context, systemPrompt string, plan *Plan,
 			})
 			a.session.UpdatedAt = respTime
 
-			// If plan has more tool steps, treat this as interim and continue
-			if toolsUsed && planHasMoreToolSteps(plan, toolRoundsCompleted) {
-				al.log("[EXECUTE] text response but plan has more steps, continuing")
-				continue
-			}
-
-			return toolsUsed, nil
+			return ChatMessage{
+				Role:      "assistant",
+				Content:   content,
+				Timestamp: respTime.Format("15:04:05"),
+				InTokens:  a.tokenStats.LastInput,
+				OutTokens: a.tokenStats.LastOutput,
+			}, nil
 		}
 
-		// Tool calls detected
-		toolsUsed = true
-
-		// Store assistant message (may contain text before tool calls)
-		if assistantContent != "" {
+		// Tool calls detected — store assistant message if it has text
+		if strings.TrimSpace(content) != "" {
 			a.session.Records = append(a.session.Records, memory.Record{
 				Timestamp: time.Now(),
 				Role:      "assistant",
-				Content:   assistantContent,
+				Content:   content,
 				Tier:      memory.TierHot,
 			})
 		}
 
-		// Determine which plan step we're on
-		planStepNum := toolRoundsCompleted + 1
-		if plan != nil {
-			toolStepIdx := 0
-			for _, s := range plan.Steps {
-				if s.Tool != "" && s.Tool != "null" {
-					toolStepIdx++
-					if toolStepIdx == toolRoundsCompleted+1 {
-						planStepNum = s.Step
-						break
-					}
-				}
-			}
-		}
-
 		// Execute each tool call
-		al.log("[EXECUTE] executing %d tool calls (plan step %d)", len(choice.Message.ToolCalls), planStepNum)
-		wailsRuntime.EventsEmit(a.ctx, "chat:phase", fmt.Sprintf("execute (step %d)", planStepNum))
+		al.log("[ROUND %d] executing %d tool calls", round, len(choice.Message.ToolCalls))
+		wailsRuntime.EventsEmit(a.ctx, "chat:phase", fmt.Sprintf("execute (round %d)", round+1))
+
 		for _, tc := range choice.Message.ToolCalls {
-			al.log("[EXECUTE]   calling: %s", tc.Function.Name)
-			result, err := a.handleToolCall(tc)
-			if err != nil {
-				result = fmt.Sprintf("Error: %v", err)
+			al.log("[ROUND %d]   calling: %s", round, tc.Function.Name)
+			wailsRuntime.EventsEmit(a.ctx, "chat:tool_executing", map[string]string{
+				"name": tc.Function.Name,
+				"args": tc.Function.Arguments,
+			})
+			result, tcErr := a.handleToolCall(tc)
+			if tcErr != nil {
+				al.log("[ROUND %d]   error: %v", round, tcErr)
+				result = fmt.Sprintf("Error: %v", tcErr)
+			} else {
+				al.log("[ROUND %d]   result: %s", round, truncate(result, 200))
 			}
 
 			// Extract image and emit tool result
@@ -474,202 +228,35 @@ func (a *App) executePhase(ctx context.Context, systemPrompt string, plan *Plan,
 		}
 
 		a.autoSave()
-		toolRoundsCompleted++
-		al.log("[EXECUTE] toolRoundsCompleted=%d", toolRoundsCompleted)
-
-		// Interim summary: force text-only call to let LLM observe results
-		if ctx.Err() != nil {
-			return toolsUsed, ctx.Err()
-		}
-
 		wailsRuntime.EventsEmit(a.ctx, "chat:thinking", nil)
-
-		interimMessages := a.buildMessagesWithPrompt(systemPrompt) // use base prompt without tool hints
-		// Add ephemeral instruction with remaining plan steps
-		interimInstruction := "Briefly summarize what you learned from the tool result."
-		if planHasMoreToolSteps(plan, toolRoundsCompleted) {
-			var remaining []string
-			toolStepsSeen := 0
-			for _, s := range plan.Steps {
-				if s.Tool != "" && s.Tool != "null" {
-					toolStepsSeen++
-					if toolStepsSeen > round+1 {
-						remaining = append(remaining, fmt.Sprintf("- %s (tool: %s)", s.Description, s.Tool))
-					}
-				}
-			}
-			if len(remaining) > 0 {
-				interimInstruction += "\n\nRemaining steps in the plan:\n" + strings.Join(remaining, "\n") +
-					"\n\nPrepare the information needed for the next step."
-			}
-		}
-		interimMessages = append(interimMessages, client.TextMessage("system", interimInstruction))
-
-		interimResp, err := a.llm.ChatWithContext(ctx, interimMessages, nil) // no tools = force text
-		if err != nil {
-			return toolsUsed, err
-		}
-
-		a.tokenStats.LastInput = interimResp.Usage.PromptTokens
-		a.tokenStats.LastOutput = interimResp.Usage.CompletionTokens
-		a.tokenStats.TotalInput += interimResp.Usage.PromptTokens
-		a.tokenStats.TotalOutput += interimResp.Usage.CompletionTokens
-
-		continueLoop := false
-		if len(interimResp.Choices) > 0 {
-			al.log("[INTERIM] response received")
-			interim := strings.TrimSpace(strip.ThinkTags(interimResp.Choices[0].Message.Content))
-			interim = stripLeakedTimestamps(interim)
-
-			al.log("[INTERIM] content_len=%d, preview=%.100s", len(interim), interim)
-
-			// Check if interim contains gemma tool call tags — if so, execute them
-			if parsed := parseGemmaToolCalls(interim); len(parsed) > 0 {
-				al.log("[INTERIM] gemma tool calls detected: %d", len(parsed))
-				for _, tc := range parsed {
-					al.log("[INTERIM]   gemma tool: %s(%s)", tc.Function.Name, tc.Function.Arguments)
-				}
-				cleanInterim := stripGemmaToolCallTags(interim)
-				if cleanInterim != "" {
-					a.session.Records = append(a.session.Records, memory.Record{
-						Timestamp: time.Now(),
-						Role:      "assistant",
-						Content:   cleanInterim,
-						Tier:      memory.TierHot,
-					})
-				}
-				// Execute the tool calls from interim
-				for _, tc := range parsed {
-					al.log("[INTERIM]   executing: %s", tc.Function.Name)
-					result, tcErr := a.handleToolCall(tc)
-					if tcErr != nil {
-						al.log("[INTERIM]   error: %v", tcErr)
-						result = fmt.Sprintf("Error: %v", tcErr)
-					} else {
-						al.log("[INTERIM]   result: %.200s", result)
-					}
-					toolResultEvent := map[string]string{"name": tc.Function.Name, "result": result}
-					imageDataURL := a.extractImageFromResult(result)
-					if imageDataURL != "" {
-						toolResultEvent["image"] = imageDataURL
-					}
-					wailsRuntime.EventsEmit(a.ctx, "chat:toolresult", toolResultEvent)
-
-					var toolImages []memory.ImageEntry
-					if imgURL, ok := toolResultEvent["image"]; ok && imgURL != "" && a.images != nil {
-						id, mime, saveErr := a.images.Save(imgURL)
-						if saveErr == nil {
-							toolImages = append(toolImages, memory.ImageEntry{ID: id, MimeType: mime})
-						}
-					}
-					a.session.Records = append(a.session.Records, memory.Record{
-						Timestamp: time.Now(),
-						Role:      "tool",
-						Content:   fmt.Sprintf("[Tool executed: %s]\nOutput:\n%s", tc.Function.Name, result),
-						Tier:      memory.TierHot,
-						Images:    toolImages,
-					})
-				}
-				continueLoop = true
-			} else if interim != "" {
-				a.session.Records = append(a.session.Records, memory.Record{
-					Timestamp: time.Now(),
-					Role:      "assistant",
-					Content:   interim,
-					Tier:      memory.TierHot,
-				})
-				wailsRuntime.EventsEmit(a.ctx, "chat:interim", interim)
-			}
-		}
-
-		// Update phase display for next step
-		if planHasMoreToolSteps(plan, toolRoundsCompleted) {
-			nextStep := toolRoundsCompleted + 1
-			if plan != nil {
-				idx := 0
-				for _, s := range plan.Steps {
-					if s.Tool != "" && s.Tool != "null" {
-						idx++
-						if idx == nextStep {
-							nextStep = s.Step
-							break
-						}
-					}
-				}
-			}
-			wailsRuntime.EventsEmit(a.ctx, "chat:phase", fmt.Sprintf("execute (step %d)", nextStep))
-		}
-
-
-		// Continue if: interim had gemma tool calls, OR plan has more tool steps
-		if !continueLoop && planHasMoreToolSteps(plan, toolRoundsCompleted) {
-			al.log("[EXECUTE] plan has more tool steps, continuing")
-			continueLoop = true
-		}
-		al.log("[EXECUTE] continueLoop=%v", continueLoop)
-		if !continueLoop {
-			break
-		}
 	}
 
-	return toolsUsed, nil
+	al.log("max rounds reached")
+	wailsRuntime.EventsEmit(a.ctx, "chat:phase", nil)
+
+	return ChatMessage{
+		Role:      "assistant",
+		Content:   "Maximum tool call iterations reached.",
+		Timestamp: time.Now().Format("15:04:05"),
+	}, nil
 }
 
-// summarizePhase generates the final response after tool execution.
-func (a *App) summarizePhase(ctx context.Context, systemPrompt string) (string, error) {
-	messages := a.buildMessagesWithPrompt(systemPrompt)
-	messages = append(messages, client.TextMessage("system",
-		"Based on all the actions you performed and their results, provide a final concise answer to the user. Do NOT call any more tools."))
-
-	resp, err := a.llm.ChatWithContext(ctx, messages, nil) // no tools
-	if err != nil {
-		return "", err
+func truncate(s string, n int) string {
+	if len(s) <= n {
+		return s
 	}
-
-	a.tokenStats.LastInput = resp.Usage.PromptTokens
-	a.tokenStats.LastOutput = resp.Usage.CompletionTokens
-	a.tokenStats.TotalInput += resp.Usage.PromptTokens
-	a.tokenStats.TotalOutput += resp.Usage.CompletionTokens
-
-	if len(resp.Choices) == 0 {
-		return "", fmt.Errorf("empty response")
-	}
-
-	content := strings.TrimSpace(strip.ThinkTags(resp.Choices[0].Message.Content))
-	content = stripLeakedTimestamps(content)
-	content = a.resolveLocalImages(content)
-	return content, nil
-}
-
-// buildMessagesWithPrompt is like buildMessages but uses a custom system prompt.
-func (a *App) buildMessagesWithPrompt(systemPrompt string) []client.Message {
-	// Save the original prompt builder's output but replace the system prompt
-	return a.buildMessagesCustom(systemPrompt)
-}
-
-// lastInterimSummary returns the most recent assistant message content (interim summary).
-func (a *App) lastInterimSummary() string {
-	for i := len(a.session.Records) - 1; i >= 0; i-- {
-		r := a.session.Records[i]
-		if r.Role == "assistant" && r.Tier == memory.TierHot && r.Content != "" {
-			return r.Content
-		}
-	}
-	return ""
+	return s[:n] + "..."
 }
 
 // parseGemmaToolCalls extracts tool calls from gemma-style text tags.
 // Format: <|tool_call>call:tool_name{json_args}<tool_call|>
-// Also handles: <|tool_call>call:tool_name {"key": "value"}<tool_call|>
 func parseGemmaToolCalls(text string) []client.ToolCall {
 	var calls []client.ToolCall
 
 	remaining := text
 	for {
-		// Find opening tag
 		start := strings.Index(remaining, "<|tool_call>")
 		if start < 0 {
-			// Try alternative format
 			start = strings.Index(remaining, "<tool_call>")
 			if start < 0 {
 				break
@@ -679,7 +266,6 @@ func parseGemmaToolCalls(text string) []client.ToolCall {
 			remaining = remaining[start+len("<|tool_call>"):]
 		}
 
-		// Find closing tag
 		end := strings.Index(remaining, "<tool_call|>")
 		if end < 0 {
 			end = strings.Index(remaining, "</tool_call>")
@@ -691,32 +277,26 @@ func parseGemmaToolCalls(text string) []client.ToolCall {
 		callStr := strings.TrimSpace(remaining[:end])
 		remaining = remaining[end:]
 
-		// Parse: call:tool_name{args} or call:tool_name {"key": "val"}
 		if !strings.HasPrefix(callStr, "call:") {
 			continue
 		}
 		callStr = strings.TrimPrefix(callStr, "call:")
 
-		// Find where the tool name ends and args begin
 		var toolName, argsStr string
 		braceIdx := strings.Index(callStr, "{")
 		if braceIdx >= 0 {
 			toolName = strings.TrimSpace(callStr[:braceIdx])
 			argsStr = callStr[braceIdx:]
 		} else {
-			// No args
 			toolName = strings.TrimSpace(callStr)
 			argsStr = "{}"
 		}
 
-		// Clean up tool name (remove quotes, spaces)
 		toolName = strings.Trim(toolName, "\" '")
-
 		if toolName == "" {
 			continue
 		}
 
-		// Try to fix common JSON issues in args
 		if fixed, err := jsonfix.Extract(argsStr); err == nil {
 			argsStr = fixed
 		}
@@ -759,4 +339,3 @@ func stripGemmaToolCallTags(text string) string {
 	}
 	return strings.TrimSpace(result)
 }
-

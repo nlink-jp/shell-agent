@@ -84,8 +84,8 @@ function App() {
   const [sidebarTab, setSidebarTab] = useState<'sessions' | 'tools' | 'status'>('sessions');
   const [mitlRequest, setMitlRequest] = useState<ToolCallRequest | null>(null);
   const [executingTool, setExecutingTool] = useState<string | null>(null);
+  const [executingArgs, setExecutingArgs] = useState<string>('');
   const [currentPhase, setCurrentPhase] = useState<string | null>(null);
-  const [currentPlan, setCurrentPlan] = useState<any>(null);
   const [pinnedMemories, setPinnedMemories] = useState<PinnedMemory[]>([]);
   const [showSettings, setShowSettings] = useState(false);
   const [settings, setSettings] = useState<any>(null);
@@ -150,12 +150,14 @@ function App() {
       }
     });
 
-    const offToolExecuting = EventsOn('chat:tool_executing', (info: {name: string}) => {
+    const offToolExecuting = EventsOn('chat:tool_executing', (info: {name: string, args?: string}) => {
       setExecutingTool(info.name);
+      setExecutingArgs(info.args || '');
     });
 
     const offToolResult = EventsOn('chat:toolresult', (res: ToolResult) => {
       setExecutingTool(null);
+      setExecutingArgs('');
       const now = new Date().toLocaleTimeString('ja-JP', { hour12: false });
       setMessages(prev => [...prev, {
         role: 'tool',
@@ -179,22 +181,6 @@ function App() {
 
     const offPhase = EventsOn('chat:phase', (phase: string | null) => {
       setCurrentPhase(phase);
-      if (!phase) setCurrentPlan(null);
-    });
-
-    const offPlan = EventsOn('chat:plan', (plan: any) => {
-      setCurrentPlan(plan);
-    });
-
-    const offInterim = EventsOn('chat:interim', (text: string) => {
-      if (text) {
-        const now = new Date().toLocaleTimeString('ja-JP', { hour12: false });
-        setMessages(prev => [...prev, {
-          role: 'assistant',
-          content: text,
-          timestamp: now,
-        }]);
-      }
     });
 
     const offTitleUpdated = EventsOn('chat:title_updated', () => {
@@ -212,8 +198,6 @@ function App() {
       offToolsUpdated();
       offTitleUpdated();
       offPhase();
-      offPlan();
-      offInterim();
     };
   }, []);
 
@@ -896,6 +880,9 @@ function App() {
               <div className="message-content">
                 <span className="spinner" />
                 <span className="executing-text">Executing: <code>{executingTool}</code></span>
+                {executingArgs && executingArgs !== '{}' && (
+                  <pre className="executing-args">{(() => { try { return JSON.stringify(JSON.parse(executingArgs), null, 2); } catch { return executingArgs; } })()}</pre>
+                )}
               </div>
             </div>
           )}
@@ -917,22 +904,6 @@ function App() {
             </div>
           )}
 
-          {currentPlan && currentPhase && (
-            <div className="plan-display">
-              <div className="plan-header">Plan: {currentPlan.goal}</div>
-              <div className="plan-steps">
-                {currentPlan.steps?.map((step: any, i: number) => (
-                  <div key={i} className="plan-step">
-                    <span className="plan-step-num">{step.step}</span>
-                    <span className="plan-step-desc">{step.description}</span>
-                    {step.tool && step.tool !== 'null' && (
-                      <code className="plan-step-tool">{step.tool}</code>
-                    )}
-                  </div>
-                ))}
-              </div>
-            </div>
-          )}
 
           {streaming && streamContent && (
             <div className="message assistant streaming">

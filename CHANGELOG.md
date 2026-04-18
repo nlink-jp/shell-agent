@@ -2,6 +2,45 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.4.0] - 2026-04-18
+
+### Added
+- Tool enable/disable toggle per tool in Tools panel
+- Disabled tools excluded from LLM and listed in system prompt
+- Available tools listed in system prompt for context awareness
+- Bulk delete for sessions and pinned memories (Select → All/None → Delete)
+- Sidebar collapse/expand with persistent state
+- Sidebar resizable by dragging (180-500px)
+- Sidebar bottom navigation: Sessions, New Chat, Tools, Status, Settings
+- ESC to cancel ongoing LLM requests (HTTP context cancellation)
+- Input history (Up/Down arrows, max 50)
+- Copy button on message bubbles
+- Token usage per message (in/out) and session totals in Status
+- Token info persisted in session JSON
+- Cmd+Enter to send (Slack-compatible)
+- Single newline rendering via remark-breaks
+- MCP guardian restart button and hot-reload on settings save
+- Configurable max tool rounds (default 10)
+- Tool execution images persisted for session restore
+
+### Changed
+- ChatInput extracted to memo'd component (major input performance fix)
+- Image data URLs stored in ref cache, not React state
+- Status polling removed (on-demand only)
+- System prompt: proactive tool usage instruction
+- Stale tool instruction messages cleaned per turn
+- Tool list sorted alphabetically
+
+### Fixed
+- Empty `required` array for parameterless tools (API 400 error)
+- Sidebar state (width, collapsed) persisted across restarts
+- Window shutdown preserves sidebar state
+- Session deletion clears chat window
+- New sessions saved to disk immediately
+- MITL dialog auto-scroll
+- Leaked timestamps stripped from LLM responses
+- Fake tool call JSON detection and removal
+
 ## [0.3.0] - 2026-04-18
 
 ### Added

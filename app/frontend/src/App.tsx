@@ -12,6 +12,7 @@ import {
   ApproveMITL, RejectMITL, GetPinnedMemories,
   UpdatePinnedMemory, DeletePinnedMemory,
   GetConfig, SaveConfig, RestartGuardians, CancelExecution,
+  SaveSidebarState,
 } from '../wailsjs/go/main/App';
 import { EventsOn } from '../wailsjs/runtime/runtime';
 
@@ -86,6 +87,9 @@ function App() {
   const [showSettings, setShowSettings] = useState(false);
   const [settings, setSettings] = useState<any>(null);
   const [lightboxImage, setLightboxImage] = useState<string | null>(null);
+  const [sidebarWidth, setSidebarWidth] = useState(280);
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
+  const resizingRef = useRef(false);
   const composingRef = useRef(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const imageCacheRef = useRef<Record<string, string>>({});
@@ -107,6 +111,12 @@ function App() {
     GetConfig().then((cfg: any) => {
       if (cfg?.theme) {
         document.documentElement.setAttribute('data-theme', cfg.theme);
+      }
+      if (cfg?.window?.sidebar_width > 0) {
+        setSidebarWidth(cfg.window.sidebar_width);
+      }
+      if (cfg?.window?.sidebar_collapsed) {
+        setSidebarCollapsed(true);
       }
       if (cfg?.startup_mode === 'last' && cfg?.last_session) {
         LoadSession(cfg.last_session).then((msgs) => {
@@ -186,6 +196,28 @@ function App() {
 
   function handleCompositionStart() { composingRef.current = true; }
   function handleCompositionEnd() { setTimeout(() => { composingRef.current = false; }, 50); }
+
+  function startResize(e: React.MouseEvent) {
+    e.preventDefault();
+    resizingRef.current = true;
+    const startX = e.clientX;
+    const startWidth = sidebarWidth;
+    function onMove(ev: MouseEvent) {
+      if (!resizingRef.current) return;
+      const newWidth = Math.max(180, Math.min(500, startWidth + ev.clientX - startX));
+      setSidebarWidth(newWidth);
+    }
+    function onUp() {
+      resizingRef.current = false;
+      document.removeEventListener('mousemove', onMove);
+      document.removeEventListener('mouseup', onUp);
+      // Save final width
+      const el = document.querySelector('.sidebar') as HTMLElement;
+      if (el) SaveSidebarState(parseInt(el.style.width) || 280, false);
+    }
+    document.addEventListener('mousemove', onMove);
+    document.addEventListener('mouseup', onUp);
+  }
 
   const handleSend = useCallback(async (text: string, images: string[]) => {
     const now = new Date();
@@ -351,26 +383,23 @@ function App() {
           <button className="lightbox-close" onClick={() => setLightboxImage(null)}>&#x2715;</button>
         </div>
       )}
-      <div className="sidebar">
+      {sidebarCollapsed && (
+        <div className="sidebar-collapsed">
+          <div className="sidebar-bottom">
+            <button className="sidebar-nav" onClick={handleNewSession} title="New Chat"><span className="sidebar-nav-ic">+</span></button>
+            <div className="sidebar-bottom-divider" />
+            <button className="sidebar-nav" onClick={() => { setSidebarCollapsed(false); setSidebarTab('tools'); }} title="Tools"><span className="sidebar-nav-ic">&#x2692;</span></button>
+            <button className="sidebar-nav" onClick={() => { setSidebarCollapsed(false); setSidebarTab('status'); }} title="Status"><span className="sidebar-nav-ic ic-status">&#x2261;</span></button>
+            <div className="sidebar-bottom-divider" />
+            <button className="sidebar-nav" onClick={openSettings} title="Settings"><span className="sidebar-nav-ic ic-settings">&#x2699;</span></button>
+            <div className="sidebar-bottom-divider" />
+            <button className="sidebar-nav" onClick={() => { setSidebarCollapsed(false); SaveSidebarState(sidebarWidth, false); }} title="Expand sidebar"><span className="sidebar-nav-ic">&#x25B6;</span></button>
+          </div>
+        </div>
+      )}
+      <div className="sidebar" style={{ width: sidebarCollapsed ? 0 : sidebarWidth, display: sidebarCollapsed ? 'none' : undefined }}>
         <div className="sidebar-header">
           <h2>Shell Agent</h2>
-          <button className="new-chat-btn" onClick={handleNewSession}>+ New Chat</button>
-          <button className="settings-btn" onClick={openSettings}>Settings</button>
-        </div>
-
-        <div className="sidebar-tabs">
-          <button
-            className={sidebarTab === 'sessions' ? 'active' : ''}
-            onClick={() => setSidebarTab('sessions')}
-          >Sessions</button>
-          <button
-            className={sidebarTab === 'tools' ? 'active' : ''}
-            onClick={() => setSidebarTab('tools')}
-          >Tools</button>
-          <button
-            className={sidebarTab === 'status' ? 'active' : ''}
-            onClick={() => setSidebarTab('status')}
-          >Status</button>
         </div>
 
         <div className="sidebar-content">
@@ -539,8 +568,19 @@ function App() {
             </div>
           )}
         </div>
+        <div className="sidebar-bottom">
+          <button className="sidebar-nav" onClick={handleNewSession}><span className="sidebar-nav-ic">+</span> New Chat</button>
+          <div className="sidebar-bottom-divider" />
+          <button className={`sidebar-nav ${sidebarTab === 'tools' ? 'active' : ''}`} onClick={() => setSidebarTab(sidebarTab === 'tools' ? 'sessions' : 'tools')}><span className="sidebar-nav-ic">&#x2692;</span> Tools</button>
+          <button className={`sidebar-nav ${sidebarTab === 'status' ? 'active' : ''}`} onClick={() => setSidebarTab(sidebarTab === 'status' ? 'sessions' : 'status')}><span className="sidebar-nav-ic ic-status">&#x2261;</span> Status</button>
+          <div className="sidebar-bottom-divider" />
+          <button className="sidebar-nav" onClick={openSettings}><span className="sidebar-nav-ic ic-settings">&#x2699;</span> Settings</button>
+          <div className="sidebar-bottom-divider" />
+          <button className="sidebar-nav" onClick={() => { setSidebarCollapsed(true); SaveSidebarState(sidebarWidth, true); }} title="Collapse sidebar"><span className="sidebar-nav-ic">&#x25C0;</span></button>
+        </div>
       </div>
 
+      {!sidebarCollapsed && <div className="sidebar-resize" onMouseDown={startResize} />}
       <div className="main">
         <div className="drag-handle" />
         {showSettings && settings ? (

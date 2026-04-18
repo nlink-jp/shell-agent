@@ -74,6 +74,10 @@ export function SaveConfig(arg1) {
   return window['go']['main']['App']['SaveConfig'](arg1);
 }
 
+export function SaveSidebarState(arg1, arg2) {
+  return window['go']['main']['App']['SaveSidebarState'](arg1, arg2);
+}
+
 export function SendMessage(arg1) {
   return window['go']['main']['App']['SendMessage'](arg1);
 }

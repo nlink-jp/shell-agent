@@ -43,6 +43,8 @@ export namespace config {
 	    y: number;
 	    width: number;
 	    height: number;
+	    sidebar_width: number;
+	    sidebar_collapsed: boolean;
 	
 	    static createFrom(source: any = {}) {
 	        return new WindowConfig(source);
@@ -54,6 +56,8 @@ export namespace config {
 	        this.y = source["y"];
 	        this.width = source["width"];
 	        this.height = source["height"];
+	        this.sidebar_width = source["sidebar_width"];
+	        this.sidebar_collapsed = source["sidebar_collapsed"];
 	    }
 	}
 	export class GuardianConfig {

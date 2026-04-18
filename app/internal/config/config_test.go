@@ -16,7 +16,7 @@ func TestDefaultConfig(t *testing.T) {
 	if cfg.API.Model != "google/gemma-4-26b-a4b" {
 		t.Errorf("unexpected model: %s", cfg.API.Model)
 	}
-	if cfg.Memory.HotTokenLimit != 4096 {
+	if cfg.Memory.HotTokenLimit != 65536 {
 		t.Errorf("unexpected hot token limit: %d", cfg.Memory.HotTokenLimit)
 	}
 }

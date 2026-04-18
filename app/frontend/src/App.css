@@ -669,9 +669,7 @@
 }
 
 .message.executing .message-content {
-  display: flex;
-  align-items: center;
-  gap: 10px;
+  display: block;
   background: var(--bg-msg-tool);
   border: 1px dashed var(--border-msg-tool);
 }
@@ -679,6 +677,8 @@
 .executing-text {
   color: var(--text-tool);
   font-size: 13px;
+  display: inline;
+  margin-left: 8px;
 }
 
 .executing-text code {
@@ -686,6 +686,21 @@
   background: var(--bg-inline-code);
   padding: 1px 5px;
   border-radius: 3px;
+}
+
+.executing-args {
+  margin: 6px 0 0 0;
+  padding: 8px;
+  background: var(--bg-code);
+  border: 1px solid var(--border-primary);
+  border-radius: 4px;
+  font-family: 'SF Mono', 'Menlo', monospace;
+  font-size: 11px;
+  color: var(--text-secondary);
+  white-space: pre-wrap;
+  word-break: break-all;
+  max-width: 100%;
+  overflow: hidden;
 }
 
 /* Plan display */

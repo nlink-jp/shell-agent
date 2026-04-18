@@ -12,7 +12,7 @@ import {
   ApproveMITL, RejectMITL, GetPinnedMemories,
   UpdatePinnedMemory, DeletePinnedMemory,
   GetConfig, SaveConfig, RestartGuardians, CancelExecution,
-  SaveSidebarState,
+  SaveSidebarState, ToggleTool,
 } from '../wailsjs/go/main/App';
 import { EventsOn } from '../wailsjs/runtime/runtime';
 
@@ -29,6 +29,7 @@ interface ToolInfo {
   name: string;
   description: string;
   category: string;
+  enabled: boolean;
 }
 
 interface SessionInfo {
@@ -193,7 +194,7 @@ function App() {
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
-  }, [messages, streamContent]);
+  }, [messages, streamContent, mitlRequest, executingTool]);
 
   function refreshStatus() {
     GetLLMStatus().then(setLLMStatus);
@@ -521,9 +522,17 @@ function App() {
           {sidebarTab === 'tools' && (
             <div className="tool-list">
               {tools.map(t => (
-                <div key={t.name} className="tool-item">
-                  <span className="tool-name">{t.name}</span>
-                  <span className={`tool-category ${t.category}`}>{t.category}</span>
+                <div key={t.name} className={`tool-item ${!t.enabled ? 'disabled' : ''}`}>
+                  <div className="tool-header">
+                    <span className="tool-name">{t.name}</span>
+                    <span className={`tool-category ${t.category}`}>{t.category}</span>
+                    <label className="tool-toggle">
+                      <input type="checkbox" checked={t.enabled} onChange={e => {
+                        ToggleTool(t.name, e.target.checked).then(() => GetTools().then(setTools));
+                      }} />
+                      <span className="tool-toggle-slider" />
+                    </label>
+                  </div>
                   <p className="tool-desc">{t.description}</p>
                 </div>
               ))}

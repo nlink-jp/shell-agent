@@ -62,7 +62,8 @@ type MemoryConfig struct {
 
 // ToolsConfig holds tool script settings.
 type ToolsConfig struct {
-	ScriptDir string `json:"script_dir"`
+	ScriptDir     string   `json:"script_dir"`
+	DisabledTools []string `json:"disabled_tools"`
 }
 
 // GuardianConfig holds mcp-guardian settings for one MCP server.

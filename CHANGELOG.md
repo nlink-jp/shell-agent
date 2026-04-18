@@ -2,6 +2,49 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.5.0] - 2026-04-18
+
+### Added
+- Simple agent loop with tool-calling feedback (replaced ReAct)
+- Gemma-4 native tool call tag parser (`<|tool_call>call:name{args}<tool_call|>`)
+- Tool name fuzzy matching (e.g., `weather:get_current_weather` → `weather`)
+- Agent debug logging (`~/Library/.../shell-agent/logs/react.log`)
+- Tool execution parameter display inline
+- `create-report` built-in tool: markdown reports with image gallery
+- Report fullscreen overlay (Expand/Copy/Save)
+- Report persistence in session JSON with ImageStore refs
+- Image copy to clipboard (macOS osascript) and save to file (native dialog)
+- Image actions on hover (Copy/Save) + lightbox toolbar
+- Markdown save with inline base64 images (single file, no collision)
+
+### Changed
+- Image handling unified: all references use ImageStore IDs
+- No data URL round-trips between frontend/backend
+- Frontend image cache keyed by ImageStore ID with lazy loading
+- System prompt tuned: prefer conversation history over redundant tool calls
+- Phase display reset at turn start
+- Session records never deleted (removed cleanEphemeralMessages)
+- Default hot_token_limit raised to 65536 (auto-correct below 8192)
+- Report content in LLM context truncated to 200 chars
+- `truncate()` uses rune-based slicing for multibyte safety
+
+### Removed
+- ReAct Plan/Execute/Summarize phases (too complex for local LLMs)
+- Plan display UI
+- Tool list in system prompt (tools via API parameter only)
+- cleanEphemeralMessages (session records preservation)
+
+### Fixed
+- Gemma tool call leakage in text-only API responses
+- Report role mapped to assistant for API compatibility
+- Lightbox z-index above report overlay
+- MITL dialog width constrained
+
+### Known Issues
+- Q4_K_M quantization degrades tool calling accuracy; Q8 recommended
+- Multi-step tool workflows depend on model capability
+- Image data handling needs central repository (planned for v0.6.0)
+
 ## [0.4.0] - 2026-04-18
 
 ### Added

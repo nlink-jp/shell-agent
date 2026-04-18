@@ -195,9 +195,8 @@ func (a *App) agentLoop(ctx context.Context, systemPrompt string, toolDefs []cli
 					if end := strings.Index(artStr, "]"); end >= 0 {
 						refs := strings.Fields(artStr[len("[Artifacts produced:"):end])
 						for _, ref := range refs {
-							if a.jobs != nil {
-								blobPath := a.jobs.BlobPath(ref)
-								if du := a.fileToDataURL(blobPath); du != "" {
+							if a.objects != nil {
+								if du, loadErr := a.objects.LoadAsDataURL(ref); loadErr == nil {
 									imageDataURL = du
 									break
 								}

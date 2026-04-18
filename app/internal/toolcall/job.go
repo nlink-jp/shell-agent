@@ -2,8 +2,10 @@ package toolcall
 
 import (
 	"fmt"
+	"mime"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 )
 
@@ -11,20 +13,21 @@ import (
 type Job struct {
 	ID      string
 	WorkDir string
-	BlobDir string
+}
+
+// Artifact is a file produced by a tool execution.
+type Artifact struct {
+	Name     string
+	MimeType string
+	Data     []byte
 }
 
 // JobManager creates and manages tool execution jobs.
-type JobManager struct {
-	blobRoot string // persistent storage for job artifacts
-}
+type JobManager struct{}
 
 // NewJobManager creates a JobManager.
-func NewJobManager(blobRoot string) (*JobManager, error) {
-	if err := os.MkdirAll(blobRoot, 0o755); err != nil {
-		return nil, err
-	}
-	return &JobManager{blobRoot: blobRoot}, nil
+func NewJobManager() *JobManager {
+	return &JobManager{}
 }
 
 // NewJob creates a new job with a unique ID and temporary workspace.
@@ -37,47 +40,66 @@ func (jm *JobManager) NewJob() (*Job, error) {
 	return &Job{
 		ID:      id,
 		WorkDir: workDir,
-		BlobDir: filepath.Join(jm.blobRoot, id),
 	}, nil
 }
 
-// Finalize moves any files produced in the work directory to persistent blob storage.
-// Returns a list of blob paths (relative to blobRoot).
-func (jm *JobManager) Finalize(job *Job) ([]string, error) {
+// Finalize reads any files produced in the work directory and returns them as artifacts.
+// The caller is responsible for saving artifacts to the object store.
+// The temp directory is cleaned up after this call.
+func (jm *JobManager) Finalize(job *Job) ([]Artifact, error) {
 	entries, err := os.ReadDir(job.WorkDir)
 	if err != nil {
+		_ = os.RemoveAll(job.WorkDir)
 		return nil, err
 	}
 
-	var blobs []string
-	if len(entries) > 0 {
-		if err := os.MkdirAll(job.BlobDir, 0o755); err != nil {
-			return nil, err
+	var artifacts []Artifact
+	for _, e := range entries {
+		if e.IsDir() {
+			continue
 		}
-		for _, e := range entries {
-			if e.IsDir() {
-				continue
-			}
-			src := filepath.Join(job.WorkDir, e.Name())
-			dst := filepath.Join(job.BlobDir, e.Name())
-			data, err := os.ReadFile(src)
-			if err != nil {
-				continue
-			}
-			if err := os.WriteFile(dst, data, 0o644); err != nil {
-				continue
-			}
-			blobs = append(blobs, filepath.Join(job.ID, e.Name()))
+		src := filepath.Join(job.WorkDir, e.Name())
+		data, err := os.ReadFile(src)
+		if err != nil {
+			continue
 		}
+
+		mimeType := detectMime(e.Name())
+		artifacts = append(artifacts, Artifact{
+			Name:     e.Name(),
+			MimeType: mimeType,
+			Data:     data,
+		})
 	}
 
 	// Clean up temp directory
 	_ = os.RemoveAll(job.WorkDir)
 
-	return blobs, nil
+	return artifacts, nil
 }
 
-// BlobPath returns the full filesystem path for a blob reference.
-func (jm *JobManager) BlobPath(blobRef string) string {
-	return filepath.Join(jm.blobRoot, blobRef)
+// detectMime guesses MIME type from file extension.
+func detectMime(filename string) string {
+	ext := strings.ToLower(filepath.Ext(filename))
+	if mt := mime.TypeByExtension(ext); mt != "" {
+		return mt
+	}
+	switch ext {
+	case ".png":
+		return "image/png"
+	case ".jpg", ".jpeg":
+		return "image/jpeg"
+	case ".gif":
+		return "image/gif"
+	case ".webp":
+		return "image/webp"
+	case ".md":
+		return "text/markdown"
+	case ".txt":
+		return "text/plain"
+	case ".json":
+		return "application/json"
+	default:
+		return "application/octet-stream"
+	}
 }

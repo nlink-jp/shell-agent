@@ -13,8 +13,10 @@ A macOS GUI chat and agent tool powered by local LLM.
 - **Markdown rendering** with syntax highlighting (GFM, code blocks, tables)
 - **Menu bar launcher** (SwiftUI) with global hotkey (Ctrl+Shift+Space)
 - **Security** — nlk/guard (prompt injection defense), nlk/jsonfix (JSON repair), nlk/strip (thinking tag removal)
-- **Settings UI** — in-app configuration for API, memory, tools, and MCP guardians
+- **Color themes** — Dark, Light (cream + blue), Warm (brown), Midnight (navy) with live preview
+- **Settings UI** — in-app configuration for API, memory, tools, MCP guardians, theme, and startup mode
 - **Session management** — auto-generated titles, rename, delete with confirmation
+- **Startup mode** — configurable: new chat or resume last session
 - **Window state persistence** — position and size remembered across launches
 
 ## Architecture

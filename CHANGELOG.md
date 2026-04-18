@@ -2,6 +2,18 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.2.0] - 2026-04-18
+
+### Added
+- Color theme switching: Dark, Light (cream + blue), Warm (brown), Midnight (navy)
+- Theme selector in Settings → Appearance with live preview
+- Configurable startup mode: "New Chat" or "Resume Last Chat"
+- Last session ID auto-saved on shutdown for resume
+
+### Changed
+- All CSS colors migrated to CSS custom properties for theming
+- Guardian "Add" button uses theme-aware colors instead of hardcoded purple
+
 ## [0.1.0] - 2026-04-18
 
 ### Added

@@ -612,9 +612,124 @@
   color: var(--text-tool);
 }
 
+.pinned-content {
+  flex: 1;
+  cursor: default;
+  min-width: 0;
+}
+
 .pinned-fact {
   color: var(--text-secondary);
   line-height: 1.3;
+  display: block;
+}
+
+.pinned-fact-en {
+  font-size: 10px;
+  color: var(--text-dim);
+  display: block;
+  margin-top: 1px;
+  font-style: italic;
+}
+
+.pinned-time {
+  font-size: 10px;
+  color: var(--text-very-dim);
+  display: block;
+  margin-top: 1px;
+}
+
+.pinned-edit-fields {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.pinned-delete {
+  background: none;
+  border: none;
+  color: var(--text-very-dim);
+  cursor: pointer;
+  font-size: 10px;
+  padding: 2px;
+  opacity: 0;
+  transition: opacity 0.15s;
+  flex-shrink: 0;
+}
+
+.pinned-item:hover .pinned-delete {
+  opacity: 1;
+}
+
+.pinned-delete:hover {
+  color: var(--text-error);
+}
+
+.pinned-edit {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  width: 100%;
+}
+
+.pinned-edit select {
+  padding: 2px 4px;
+  background: var(--bg-input-field);
+  border: 1px solid var(--border-accent);
+  border-radius: 3px;
+  color: var(--text-primary);
+  font-size: 10px;
+  flex-shrink: 0;
+}
+
+.pinned-edit input {
+  flex: 1;
+  padding: 2px 6px;
+  background: var(--bg-input-field);
+  border: 1px solid var(--border-accent);
+  border-radius: 3px;
+  color: var(--text-primary);
+  font-size: 12px;
+  font-family: inherit;
+  outline: none;
+}
+
+.pinned-confirm {
+  display: flex;
+  gap: 4px;
+  flex-shrink: 0;
+}
+
+.pinned-confirm-yes {
+  padding: 1px 6px;
+  background: var(--bg-msg-error);
+  border: 1px solid var(--border-msg-error);
+  border-radius: 3px;
+  color: var(--text-error);
+  cursor: pointer;
+  font-size: 10px;
+}
+
+.pinned-confirm-no {
+  padding: 1px 6px;
+  background: var(--bg-hover);
+  border: 1px solid var(--border-input);
+  border-radius: 3px;
+  color: var(--text-muted);
+  cursor: pointer;
+  font-size: 10px;
+}
+
+.pinned-edit-save {
+  padding: 2px 8px;
+  background: var(--bg-btn-primary);
+  border: 1px solid var(--border-accent);
+  border-radius: 3px;
+  color: var(--text-accent);
+  cursor: pointer;
+  font-size: 11px;
+  flex-shrink: 0;
 }
 
 /* MITL Approval Dialog */

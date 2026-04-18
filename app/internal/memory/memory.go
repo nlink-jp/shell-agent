@@ -261,8 +261,9 @@ func (s *Session) ApplySummary(summarized []Record, summaryText string) {
 
 // PinnedMemory represents an important fact extracted by the LLM.
 type PinnedMemory struct {
-	Fact       string    `json:"fact"`
-	Category   string    `json:"category"` // preference, decision, fact, context
+	Fact       string    `json:"fact"`        // English (for analysis)
+	NativeFact string    `json:"native_fact"` // User's native language
+	Category   string    `json:"category"`    // preference, decision, fact, context
 	SourceTime time.Time `json:"source_time"`
 	CreatedAt  time.Time `json:"created_at"`
 }
@@ -309,6 +310,24 @@ func (ps *PinnedStore) Add(m PinnedMemory) bool {
 	return true
 }
 
+// Update replaces a pinned memory at the given index.
+func (ps *PinnedStore) Update(index int, m PinnedMemory) bool {
+	if index < 0 || index >= len(ps.Entries) {
+		return false
+	}
+	ps.Entries[index] = m
+	return true
+}
+
+// Delete removes a pinned memory at the given index.
+func (ps *PinnedStore) Delete(index int) bool {
+	if index < 0 || index >= len(ps.Entries) {
+		return false
+	}
+	ps.Entries = append(ps.Entries[:index], ps.Entries[index+1:]...)
+	return true
+}
+
 // FormatForPrompt returns pinned memories as a string for system prompt injection.
 func (ps *PinnedStore) FormatForPrompt() string {
 	if len(ps.Entries) == 0 {
@@ -316,7 +335,11 @@ func (ps *PinnedStore) FormatForPrompt() string {
 	}
 	var s string
 	for _, e := range ps.Entries {
-		s += "- [" + e.Category + "] " + e.Fact + "\n"
+		s += "- [" + e.Category + "] " + e.Fact
+		if e.NativeFact != "" && e.NativeFact != e.Fact {
+			s += " (" + e.NativeFact + ")"
+		}
+		s += "\n"
 	}
 	return s
 }

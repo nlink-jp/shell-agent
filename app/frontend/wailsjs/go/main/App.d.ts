@@ -10,6 +10,8 @@ export function DeletePinnedMemory(arg1:number):Promise<boolean>;
 
 export function DeleteSession(arg1:string):Promise<void>;
 
+export function GetBlobDataURL(arg1:string):Promise<string>;
+
 export function GetConfig():Promise<config.Config>;
 
 export function GetImageDataURL(arg1:string,arg2:string):Promise<string>;

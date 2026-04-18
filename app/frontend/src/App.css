@@ -819,32 +819,32 @@
 
 .mitl-approve {
   padding: 8px 20px;
-  background: rgba(60, 140, 60, 0.4);
-  border: 1px solid rgba(60, 140, 60, 0.6);
+  background: rgba(40, 120, 40, 0.85);
+  border: 1px solid rgba(40, 120, 40, 0.9);
   border-radius: 6px;
-  color: #90d090;
+  color: #fff;
   cursor: pointer;
   font-size: 13px;
   font-weight: 600;
 }
 
 .mitl-approve:hover {
-  background: rgba(60, 140, 60, 0.6);
+  background: rgba(40, 120, 40, 1);
 }
 
 .mitl-reject {
   padding: 8px 20px;
-  background: rgba(160, 50, 50, 0.3);
-  border: 1px solid rgba(160, 50, 50, 0.5);
+  background: rgba(160, 50, 50, 0.85);
+  border: 1px solid rgba(160, 50, 50, 0.9);
   border-radius: 6px;
-  color: var(--text-error);
+  color: #fff;
   cursor: pointer;
   font-size: 13px;
   font-weight: 600;
 }
 
 .mitl-reject:hover {
-  background: rgba(160, 50, 50, 0.5);
+  background: rgba(160, 50, 50, 1);
 }
 
 /* Settings panel */

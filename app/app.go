@@ -159,11 +159,7 @@ func (a *App) startup(ctx context.Context) {
 	a.tools = toolcall.NewRegistry(config.ExpandPath(cfg.Tools.ScriptDir))
 	_ = a.tools.Scan()
 
-	jobMgr, err := toolcall.NewJobManager(config.ConfigDir() + "/blobs")
-	if err != nil {
-		fmt.Printf("job manager error: %v\n", err)
-	}
-	a.jobs = jobMgr
+	a.jobs = toolcall.NewJobManager()
 
 	// Restore last session or start new
 	if cfg.StartupMode == "last" && cfg.LastSession != "" {
@@ -450,13 +446,22 @@ func (a *App) handleToolCall(tc client.ToolCall) (string, error) {
 
 	output := result.Output
 
-	// If blobs were produced, append blob info to output
-	if len(result.Blobs) > 0 {
-		output += "\n[Artifacts produced:"
-		for _, b := range result.Blobs {
-			output += " " + b
+	// Save artifacts to object store
+	if len(result.Artifacts) > 0 && a.objects != nil {
+		var artifactIDs []string
+		for _, art := range result.Artifacts {
+			id, saveErr := a.objects.Save(art.Data, objstore.TypeBlob, art.MimeType, art.Name)
+			if saveErr == nil {
+				artifactIDs = append(artifactIDs, id)
+			}
 		}
-		output += "]"
+		if len(artifactIDs) > 0 {
+			output += "\n[Artifacts produced:"
+			for _, id := range artifactIDs {
+				output += " " + id
+			}
+			output += "]"
+		}
 	}
 
 	return output, nil
@@ -609,13 +614,16 @@ func (a *App) UpdateLocation(lat, lon float64, locality, adminArea, country stri
 	_ = a.cfg.Save()
 }
 
-// GetBlobDataURL returns a base64 data URL for a blob reference.
-func (a *App) GetBlobDataURL(blobRef string) string {
-	if a.jobs == nil {
+// GetBlobDataURL returns a base64 data URL for an object ID.
+func (a *App) GetBlobDataURL(objectID string) string {
+	if a.objects == nil {
 		return ""
 	}
-	path := a.jobs.BlobPath(blobRef)
-	return a.fileToDataURL(path)
+	du, err := a.objects.LoadAsDataURL(objectID)
+	if err != nil {
+		return ""
+	}
+	return du
 }
 
 // SaveSidebarState saves sidebar width and collapsed state.
@@ -996,22 +1004,19 @@ func isImageFilename(s string) bool {
 
 func (a *App) fileToDataURL(path string) string {
 	// Try the path as-is first, then check common directories
+	// Try objstore first by ID
+	if a.objects != nil && !strings.HasPrefix(path, "/") {
+		if du, err := a.objects.LoadAsDataURL(path); err == nil {
+			return du
+		}
+	}
+
 	candidates := []string{path}
 	if !strings.HasPrefix(path, "/") {
 		candidates = append(candidates,
 			"/tmp/shell-agent-images/"+path,
 			config.ConfigDir()+"/images/"+path,
 		)
-		// Also check blob directories
-		if a.jobs != nil {
-			blobDir := config.ConfigDir() + "/blobs"
-			entries, _ := os.ReadDir(blobDir)
-			for _, e := range entries {
-				if e.IsDir() {
-					candidates = append(candidates, blobDir+"/"+e.Name()+"/"+path)
-				}
-			}
-		}
 	}
 
 	var resolvedPath string
@@ -1203,15 +1208,14 @@ func (a *App) buildMessages(systemPrompt string) []client.Message {
 						img.ID, r.Timestamp.Format("15:04:05"))
 				}
 				messages = append(messages, client.TextMessage(role, content))
-			} else if strings.Contains(r.Content, "__IMAGE_RECALL_BLOB__") && a.jobs != nil {
-				// Expand blob image recall
+			} else if strings.Contains(r.Content, "__IMAGE_RECALL_BLOB__") && a.objects != nil {
+				// Expand object store image recall
 				blobRef := r.Content
 				if idx := strings.Index(blobRef, "__IMAGE_RECALL_BLOB__"); idx >= 0 {
 					rest := blobRef[idx+len("__IMAGE_RECALL_BLOB__"):]
 					if end := strings.Index(rest, "__"); end >= 0 {
 						ref := rest[:end]
-						blobPath := a.jobs.BlobPath(ref)
-						if du := a.fileToDataURL(blobPath); du != "" {
+						if du, loadErr := a.objects.LoadAsDataURL(ref); loadErr == nil {
 							messages = append(messages, client.ImageMessage(role, content, []string{du}, []string{"[Recalled generated image]"}))
 						} else {
 							messages = append(messages, client.TextMessage(role, content))
@@ -1455,8 +1459,10 @@ func (a *App) extractReportImageURLs(content string) []map[string]string {
 			}
 		} else if strings.HasPrefix(ref, "blob:") {
 			blobRef := strings.TrimPrefix(ref, "blob:")
-			if a.jobs != nil {
-				dataURL = a.fileToDataURL(a.jobs.BlobPath(blobRef))
+			if a.objects != nil {
+				if du, loadErr := a.objects.LoadAsDataURL(blobRef); loadErr == nil {
+					dataURL = du
+				}
 			}
 		}
 
@@ -1528,9 +1534,10 @@ func (a *App) resolveReportImages(content string) string {
 			}
 		} else if strings.HasPrefix(ref, "blob:") {
 			blobRef := strings.TrimPrefix(ref, "blob:")
-			if a.jobs != nil {
-				blobPath := a.jobs.BlobPath(blobRef)
-				dataURL = a.fileToDataURL(blobPath)
+			if a.objects != nil {
+				if du, loadErr := a.objects.LoadAsDataURL(blobRef); loadErr == nil {
+					dataURL = du
+				}
 			}
 		}
 
@@ -1591,22 +1598,10 @@ func (a *App) viewImageTool(argsJSON string) string {
 		}
 	}
 
-	// Also check blob storage
-	if a.jobs != nil {
-		blobPath := a.jobs.BlobPath(args.ImageID)
-		if _, err := os.Stat(blobPath); err == nil {
+	// Check object store
+	if a.objects != nil {
+		if _, ok := a.objects.Get(args.ImageID); ok {
 			return fmt.Sprintf("__IMAGE_RECALL_BLOB__%s__", args.ImageID)
-		}
-		// Try searching all jobs for the filename
-		blobDir := config.ConfigDir() + "/blobs"
-		entries, _ := os.ReadDir(blobDir)
-		for _, e := range entries {
-			if e.IsDir() {
-				candidatePath := blobDir + "/" + e.Name() + "/" + args.ImageID
-				if _, err := os.Stat(candidatePath); err == nil {
-					return fmt.Sprintf("__IMAGE_RECALL_BLOB__%s/%s__", e.Name(), args.ImageID)
-				}
-			}
 		}
 	}
 

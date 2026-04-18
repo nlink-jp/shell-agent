@@ -91,11 +91,11 @@ func (r *Registry) List() []*ToolScript {
 // DefaultTimeout is the maximum time a tool script can run.
 const DefaultTimeout = 3 * time.Minute
 
-// ExecuteResult holds the output and any blob references from tool execution.
+// ExecuteResult holds the output and artifacts from tool execution.
 type ExecuteResult struct {
-	Output string
-	JobID  string
-	Blobs  []string // blob references (relative paths)
+	Output    string
+	JobID     string
+	Artifacts []Artifact // files produced by the tool
 }
 
 // Execute runs a tool script with JSON input via stdin (legacy, no job).
@@ -154,12 +154,12 @@ func (r *Registry) ExecuteWithJob(name string, argsJSON string, jobMgr *JobManag
 		Output: string(output),
 	}
 
-	// Finalize job: move artifacts to blob storage
+	// Finalize job: collect artifacts from workspace
 	if job != nil && jobMgr != nil {
 		result.JobID = job.ID
-		blobs, err := jobMgr.Finalize(job)
+		artifacts, err := jobMgr.Finalize(job)
 		if err == nil {
-			result.Blobs = blobs
+			result.Artifacts = artifacts
 		}
 	}
 

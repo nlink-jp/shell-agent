@@ -6,7 +6,7 @@ LDFLAGS := -X 'main.version=$(VERSION)'
 build:
 	wails build -ldflags "$(LDFLAGS)"
 	mkdir -p dist
-	cp build/bin/shell-agent dist/
+	cp -r build/bin/shell-agent.app dist/
 
 build-all: build
 

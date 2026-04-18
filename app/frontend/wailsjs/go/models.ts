@@ -162,6 +162,8 @@ export namespace main {
 	    content: string;
 	    timestamp: string;
 	    images?: string[];
+	    in_tokens?: number;
+	    out_tokens?: number;
 	
 	    static createFrom(source: any = {}) {
 	        return new ChatMessage(source);
@@ -173,6 +175,8 @@ export namespace main {
 	        this.content = source["content"];
 	        this.timestamp = source["timestamp"];
 	        this.images = source["images"];
+	        this.in_tokens = source["in_tokens"];
+	        this.out_tokens = source["out_tokens"];
 	    }
 	}
 	export class LLMStatus {
@@ -182,6 +186,11 @@ export namespace main {
 	    cold_summaries: number;
 	    tokens_used: number;
 	    token_limit: number;
+	    session_input: number;
+	    session_output: number;
+	    session_total: number;
+	    last_input: number;
+	    last_output: number;
 	
 	    static createFrom(source: any = {}) {
 	        return new LLMStatus(source);
@@ -195,6 +204,11 @@ export namespace main {
 	        this.cold_summaries = source["cold_summaries"];
 	        this.tokens_used = source["tokens_used"];
 	        this.token_limit = source["token_limit"];
+	        this.session_input = source["session_input"];
+	        this.session_output = source["session_output"];
+	        this.session_total = source["session_total"];
+	        this.last_input = source["last_input"];
+	        this.last_output = source["last_output"];
 	    }
 	}
 	export class SessionInfo {

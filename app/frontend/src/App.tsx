@@ -2,6 +2,7 @@ import { useState, useEffect, useRef, useCallback } from 'react';
 import ChatInput from './ChatInput';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
+import remarkBreaks from 'remark-breaks';
 import rehypeHighlight from 'rehype-highlight';
 import 'highlight.js/styles/github-dark.css';
 import './App.css';
@@ -10,7 +11,7 @@ import {
   NewSession, LoadSession, DeleteSession, RenameSession,
   ApproveMITL, RejectMITL, GetPinnedMemories,
   UpdatePinnedMemory, DeletePinnedMemory,
-  GetConfig, SaveConfig, RestartGuardians,
+  GetConfig, SaveConfig, RestartGuardians, CancelExecution,
 } from '../wailsjs/go/main/App';
 import { EventsOn } from '../wailsjs/runtime/runtime';
 
@@ -18,7 +19,9 @@ interface Message {
   role: string;
   content: string;
   timestamp: string;
-  imageIds?: string[]; // keys into imageCache ref
+  imageIds?: string[];
+  in_tokens?: number;
+  out_tokens?: number;
 }
 
 interface ToolInfo {
@@ -40,6 +43,11 @@ interface LLMStatus {
   cold_summaries: number;
   tokens_used: number;
   token_limit: number;
+  session_input: number;
+  session_output: number;
+  session_total: number;
+  last_input: number;
+  last_output: number;
 }
 
 interface ToolCallRequest {
@@ -197,6 +205,8 @@ function App() {
         role: resp.role,
         content: resp.content,
         timestamp: resp.timestamp,
+        in_tokens: resp.in_tokens,
+        out_tokens: resp.out_tokens,
       }]);
       setStreamContent('');
       refreshStatus();
@@ -281,6 +291,8 @@ function App() {
       content: m.content,
       timestamp: m.timestamp,
       imageIds: m.images ? m.images.map((img: string) => cacheImage(img)) : undefined,
+      in_tokens: m.in_tokens,
+      out_tokens: m.out_tokens,
     }));
   }
 
@@ -432,9 +444,20 @@ function App() {
                 <span>{llmStatus.cold_summaries} summaries</span>
               </div>
               <div className="status-item">
-                <label>Token Limit</label>
-                <span>{llmStatus.token_limit}</span>
+                <label>Hot Tokens</label>
+                <span>{llmStatus.tokens_used?.toLocaleString()} / {llmStatus.token_limit?.toLocaleString()}</span>
               </div>
+
+              <div className="status-section-label">Session Token Usage</div>
+              <div className="status-item">
+                <label>Last Turn</label>
+                <span>In: {llmStatus.last_input?.toLocaleString()} / Out: {llmStatus.last_output?.toLocaleString()}</span>
+              </div>
+              <div className="status-item">
+                <label>Session Total</label>
+                <span>{llmStatus.session_total?.toLocaleString()} ({llmStatus.session_input?.toLocaleString()} in + {llmStatus.session_output?.toLocaleString()} out)</span>
+              </div>
+
               <div className="status-item">
                 <label>Pinned</label>
                 <span>{pinnedMemories.length} facts</span>
@@ -673,9 +696,19 @@ function App() {
                 </div>
               )}
               <div className="message-content markdown-body">
-                <ReactMarkdown remarkPlugins={[remarkGfm]} rehypePlugins={[rehypeHighlight]}>
+                <ReactMarkdown remarkPlugins={[remarkGfm, remarkBreaks]} rehypePlugins={[rehypeHighlight]}>
                   {msg.content}
                 </ReactMarkdown>
+              </div>
+              <div className="message-footer">
+                <div className="message-footer-left">
+                  <button className="message-copy" onClick={(e) => { navigator.clipboard.writeText(msg.content); const b = e.currentTarget; b.textContent = '\u2713'; setTimeout(() => b.textContent = '\u2398', 1000); }} title="Copy">{'\u2398'}</button>
+                </div>
+                {msg.in_tokens != null && (
+                  <span className="message-tokens">
+                    in:{msg.in_tokens.toLocaleString()} / out:{msg.out_tokens?.toLocaleString()}
+                  </span>
+                )}
               </div>
             </div>
           ))}
@@ -707,7 +740,7 @@ function App() {
                 <span className="message-role">assistant</span>
               </div>
               <div className="message-content markdown-body">
-                <ReactMarkdown remarkPlugins={[remarkGfm]} rehypePlugins={[rehypeHighlight]}>
+                <ReactMarkdown remarkPlugins={[remarkGfm, remarkBreaks]} rehypePlugins={[rehypeHighlight]}>
                   {streamContent}
                 </ReactMarkdown>
               </div>
@@ -743,7 +776,7 @@ function App() {
 
         )}
         {!showSettings && (
-          <ChatInput onSend={handleSend} disabled={streaming} />
+          <ChatInput onSend={handleSend} onCancel={() => { CancelExecution(); setStreaming(false); }} disabled={streaming} />
         )}
       </div>
     </div>

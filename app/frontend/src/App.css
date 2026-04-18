@@ -280,6 +280,17 @@
   color: var(--text-muted);
 }
 
+.status-section-label {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text-dim);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  padding: 8px 0 4px 0;
+  border-top: 1px solid var(--border-primary);
+  margin-top: 4px;
+}
+
 .empty {
   text-align: center;
   color: var(--text-very-dim);
@@ -377,6 +388,40 @@
   background: var(--bg-msg-error);
   border: 1px solid var(--border-msg-error);
   color: var(--text-error);
+}
+
+.message-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-top: 4px;
+}
+
+.message-footer-left {
+  display: flex;
+  align-items: center;
+}
+
+.message-copy {
+  background: none;
+  border: none;
+  color: var(--text-very-dim);
+  cursor: pointer;
+  font-size: 28px;
+  padding: 0;
+  margin-left: 4px;
+  line-height: 1;
+}
+
+.message-copy:hover {
+  color: var(--text-accent);
+}
+
+.message-tokens {
+  font-size: 10px;
+  color: var(--text-very-dim);
+  font-family: 'SF Mono', 'Menlo', monospace;
 }
 
 .message-images {

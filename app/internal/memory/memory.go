@@ -29,6 +29,8 @@ type Record struct {
 	Tier         Tier         `json:"tier"`
 	SummaryRange *TimeRange   `json:"summary_range,omitempty"`
 	Images       []ImageEntry `json:"images,omitempty"`
+	InTokens     int          `json:"in_tokens,omitempty"`
+	OutTokens    int          `json:"out_tokens,omitempty"`
 }
 
 // TimeRange represents the time span of a summarized memory.

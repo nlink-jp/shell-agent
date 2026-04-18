@@ -593,6 +593,20 @@
   line-height: 1;
 }
 
+.message-copy .copy-check {
+  display: none;
+  font-size: 22px;
+}
+
+.message-copy.copied .copy-icon {
+  display: none;
+}
+
+.message-copy.copied .copy-check {
+  display: inline;
+  color: var(--text-tool);
+}
+
 .message-copy:hover {
   color: var(--text-accent);
 }
@@ -617,6 +631,39 @@
   border: 1px solid var(--border-primary);
   object-fit: contain;
   cursor: pointer;
+}
+
+.message-image-wrap {
+  position: relative;
+  display: inline-block;
+}
+
+.image-actions {
+  position: absolute;
+  bottom: 6px;
+  right: 6px;
+  display: flex;
+  gap: 4px;
+  opacity: 0;
+  transition: opacity 0.15s;
+}
+
+.message-image-wrap:hover .image-actions {
+  opacity: 1;
+}
+
+.image-actions button {
+  background: rgba(0, 0, 0, 0.6);
+  border: none;
+  color: #fff;
+  cursor: pointer;
+  font-size: 11px;
+  padding: 4px 8px;
+  border-radius: 4px;
+}
+
+.image-actions button:hover {
+  background: rgba(0, 0, 0, 0.8);
 }
 
 .message-image:hover {
@@ -647,24 +694,25 @@
   box-shadow: 0 4px 30px rgba(0, 0, 0, 0.5);
 }
 
-.lightbox-close {
+.lightbox-toolbar {
   position: fixed;
   top: 16px;
   right: 16px;
-  width: 36px;
-  height: 36px;
+  display: flex;
+  gap: 8px;
+}
+
+.lightbox-toolbar button {
   border: none;
   background: rgba(255, 255, 255, 0.15);
   color: #fff;
-  font-size: 18px;
-  border-radius: 50%;
+  font-size: 14px;
+  padding: 8px 14px;
+  border-radius: 6px;
   cursor: pointer;
-  display: flex;
-  align-items: center;
-  justify-content: center;
 }
 
-.lightbox-close:hover {
+.lightbox-toolbar button:hover {
   background: rgba(255, 255, 255, 0.3);
 }
 

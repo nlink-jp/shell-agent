@@ -12,7 +12,7 @@ import {
   ApproveMITL, RejectMITL, GetPinnedMemories,
   UpdatePinnedMemory, DeletePinnedMemory,
   GetConfig, SaveConfig, RestartGuardians, CancelExecution,
-  SaveSidebarState, ToggleTool,
+  SaveSidebarState, ToggleTool, SaveImageToFile, CopyImageToClipboard,
 } from '../wailsjs/go/main/App';
 import { EventsOn } from '../wailsjs/runtime/runtime';
 
@@ -246,6 +246,9 @@ function App() {
     setMessages(prev => [...prev, userMsg]);
     setStreaming(true);
     setStreamContent('');
+    setCurrentPhase(null);
+    setExecutingTool(null);
+    setExecutingArgs('');
 
     try {
       const resp = images.length > 0
@@ -455,7 +458,18 @@ function App() {
       {lightboxImage && (
         <div className="lightbox" onClick={() => setLightboxImage(null)}>
           <img src={lightboxImage} alt="" onClick={e => e.stopPropagation()} />
-          <button className="lightbox-close" onClick={() => setLightboxImage(null)}>&#x2715;</button>
+          <div className="lightbox-toolbar" onClick={e => e.stopPropagation()}>
+            <button title="Copy" onClick={(e) => {
+              const btn = e.currentTarget;
+              CopyImageToClipboard(lightboxImage).then(() => {
+                btn.textContent = '\u2713 Copied'; setTimeout(() => btn.textContent = 'Copy', 1000);
+              });
+            }}>Copy</button>
+            <button title="Save" onClick={() => {
+              SaveImageToFile(lightboxImage);
+            }}>Save</button>
+            <button onClick={() => setLightboxImage(null)}>Close</button>
+          </div>
         </div>
       )}
       {sidebarCollapsed && (
@@ -853,7 +867,20 @@ function App() {
               {msg.imageIds && msg.imageIds.length > 0 && (
                 <div className="message-images">
                   {msg.imageIds.map((id, j) => (
-                    <img key={j} src={getCachedImage(id)} alt="" className="message-image" onClick={() => setLightboxImage(getCachedImage(id))} />
+                    <div key={j} className="message-image-wrap">
+                      <img src={getCachedImage(id)} alt="" className="message-image" onClick={() => setLightboxImage(getCachedImage(id))} />
+                      <div className="image-actions">
+                        <button title="Copy image" onClick={(e) => {
+                          const btn = e.currentTarget;
+                          CopyImageToClipboard(getCachedImage(id)).then(() => {
+                            btn.textContent = '\u2713'; setTimeout(() => btn.textContent = 'Copy', 1000);
+                          });
+                        }}>Copy</button>
+                        <button title="Save image" onClick={() => {
+                          SaveImageToFile(getCachedImage(id));
+                        }}>Save</button>
+                      </div>
+                    </div>
                   ))}
                 </div>
               )}
@@ -864,7 +891,7 @@ function App() {
               </div>
               <div className="message-footer">
                 <div className="message-footer-left">
-                  <button className="message-copy" onClick={(e) => { navigator.clipboard.writeText(msg.content); const b = e.currentTarget; b.textContent = '\u2713'; setTimeout(() => b.textContent = '\u2398', 1000); }} title="Copy">{'\u2398'}</button>
+                  <button className="message-copy" onClick={(e) => { navigator.clipboard.writeText(msg.content); const b = e.currentTarget; b.classList.add('copied'); setTimeout(() => b.classList.remove('copied'), 1000); }} title="Copy"><span className="copy-icon">{'\u2398'}</span><span className="copy-check">{'\u2713'}</span></button>
                 </div>
                 {msg.in_tokens != null && (
                   <span className="message-tokens">

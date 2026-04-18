@@ -8,6 +8,8 @@ export function ApproveMITL():Promise<void>;
 
 export function CancelExecution():Promise<void>;
 
+export function CopyImageToClipboard(arg1:string):Promise<void>;
+
 export function DeletePinnedMemory(arg1:number):Promise<boolean>;
 
 export function DeleteSession(arg1:string):Promise<void>;
@@ -39,6 +41,8 @@ export function RenameSession(arg1:string,arg2:string):Promise<void>;
 export function RestartGuardians():Promise<number>;
 
 export function SaveConfig(arg1:string):Promise<void>;
+
+export function SaveImageToFile(arg1:string):Promise<void>;
 
 export function SaveSidebarState(arg1:number,arg2:boolean):Promise<void>;
 

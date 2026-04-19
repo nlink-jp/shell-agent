@@ -150,3 +150,7 @@ Analysis tools: `load-data`, `describe-data`, `query-preview`, `query-sql`,
 - DuckDB requires CGO; Wails build uses `-tags no_duckdb_arrow`
 - Background analysis copies DB to avoid file-level locking conflict
 - Binary size ~40MB due to embedded DuckDB
+- Background `analyze` subcommand accepts `SHELL_AGENT_API_KEY` env var (takes precedence over `--api-key`) — used by the main app to avoid exposing the key in `ps` output
+- `IsReadOnlySQL` uses regex word boundaries and strips comments/string-literals before scanning; rejects multi-statement queries and DuckDB extension loaders (`LOAD` / `INSTALL`)
+- MCP `Guardian.Stop()` is idempotent and mutex-guarded; after Stop any `CallTool` returns "guardian is stopped" instead of writing to a closed pipe
+- `App.tokenStats` is protected by `statsMu` — use `addTokenUsage` / `snapshotTokenStats` / `lastTokenUsage` / `resetTokenStats` instead of touching the struct directly

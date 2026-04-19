@@ -93,11 +93,8 @@ func (a *App) agentLoop(ctx context.Context, systemPrompt string, toolDefs []cli
 			return ChatMessage{}, err
 		}
 
-		// Track tokens
-		a.tokenStats.LastInput = resp.Usage.PromptTokens
-		a.tokenStats.LastOutput = resp.Usage.CompletionTokens
-		a.tokenStats.TotalInput += resp.Usage.PromptTokens
-		a.tokenStats.TotalOutput += resp.Usage.CompletionTokens
+		// Track tokens (mutex-guarded for concurrent reads from Wails bindings)
+		a.addTokenUsage(resp.Usage.PromptTokens, resp.Usage.CompletionTokens)
 
 		if len(resp.Choices) == 0 {
 			al.log("[ROUND %d] empty choices", round)
@@ -139,13 +136,14 @@ func (a *App) agentLoop(ctx context.Context, systemPrompt string, toolDefs []cli
 
 			al.log("[ROUND %d] final text response (%d chars)", round, len(content))
 			respTime := time.Now()
+			lastIn, lastOut := a.lastTokenUsage()
 			a.session.Records = append(a.session.Records, memory.Record{
 				Timestamp: respTime,
 				Role:      "assistant",
 				Content:   content,
 				Tier:      memory.TierHot,
-				InTokens:  a.tokenStats.LastInput,
-				OutTokens: a.tokenStats.LastOutput,
+				InTokens:  lastIn,
+				OutTokens: lastOut,
 			})
 			a.session.UpdatedAt = respTime
 
@@ -153,8 +151,8 @@ func (a *App) agentLoop(ctx context.Context, systemPrompt string, toolDefs []cli
 				Role:      "assistant",
 				Content:   content,
 				Timestamp: respTime.Format("15:04:05"),
-				InTokens:  a.tokenStats.LastInput,
-				OutTokens: a.tokenStats.LastOutput,
+				InTokens:  lastIn,
+				OutTokens: lastOut,
 			}, nil
 		}
 

@@ -31,7 +31,7 @@ func RunCLI(args []string) {
 	dbPath := fs.String("db", "", "Path to DuckDB database file")
 	apiEndpoint := fs.String("api", "http://localhost:1234/v1", "OpenAI-compatible API endpoint")
 	model := fs.String("model", "gemma-4-26b-a4b", "Model name")
-	apiKey := fs.String("api-key", "", "API key (optional)")
+	apiKey := fs.String("api-key", "", "API key (optional; prefer SHELL_AGENT_API_KEY env var to avoid leaking via ps)")
 	prompt := fs.String("prompt", "", "Analysis perspective/prompt")
 	outputDir := fs.String("output", "", "Output directory for results")
 	table := fs.String("table", "", "Table to analyze (default: first table)")
@@ -40,6 +40,13 @@ func RunCLI(args []string) {
 	if err := fs.Parse(args); err != nil {
 		fmt.Fprintf(os.Stderr, "parse flags: %v\n", err)
 		os.Exit(1)
+	}
+
+	// Environment variable takes precedence over the --api-key flag so the key
+	// never appears in `ps` output when spawned by the main app.
+	effectiveAPIKey := *apiKey
+	if envKey := os.Getenv("SHELL_AGENT_API_KEY"); envKey != "" {
+		effectiveAPIKey = envKey
 	}
 
 	if *dbPath == "" || *prompt == "" || *outputDir == "" {
@@ -75,7 +82,7 @@ func RunCLI(args []string) {
 	}()
 
 	// Run analysis
-	if err := runAnalysis(ctx, *dbPath, *apiEndpoint, *model, *apiKey, *prompt, *outputDir, *table, *maxWindows, status); err != nil {
+	if err := runAnalysis(ctx, *dbPath, *apiEndpoint, *model, effectiveAPIKey, *prompt, *outputDir, *table, *maxWindows, status); err != nil {
 		status.State = "error"
 		status.Error = err.Error()
 		status.UpdatedAt = time.Now()

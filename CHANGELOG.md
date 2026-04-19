@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.7.1] - 2026-04-19
+
+### Fixed
+- Directory traversal prevention in image loading (`fileToDataURL`): path normalization with `filepath.Clean()` and allowlist check for base directories
+- SQL read-only enforcement at application layer: `IsReadOnlySQL()` blocks INSERT/UPDATE/DELETE/DROP/ALTER/CREATE/TRUNCATE in `query-sql`, `query-preview`, and `quick-summary` tools
+- Tool script security guidelines added to README (stdin JSON passing, eval/unquoted expansion warnings)
+
 ## [0.7.0] - 2026-04-19
 
 ### Added

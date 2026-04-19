@@ -81,6 +81,8 @@ Place shell scripts in `~/Library/Application Support/shell-agent/tools/` with h
 
 Categories: `read` (auto-execute), `write` / `execute` (MITL approval required)
 
+**Security**: Arguments are passed as JSON via stdin (not command-line arguments) to prevent shell injection. Tool scripts must parse JSON safely (e.g., `jq`) and never pass parsed values directly to `eval` or unquoted shell expansion.
+
 ## MCP Configuration
 
 Add MCP servers via Settings UI or `config.json`:

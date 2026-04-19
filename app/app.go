@@ -1020,14 +1020,14 @@ func isImageFilename(s string) bool {
 }
 
 func (a *App) fileToDataURL(path string) string {
-	// Try the path as-is first, then check common directories
-	// Try objstore first by ID
+	// Try objstore first by ID (non-absolute paths)
 	if a.objects != nil && !strings.HasPrefix(path, "/") {
 		if du, err := a.objects.LoadAsDataURL(path); err == nil {
 			return du
 		}
 	}
 
+	// Normalize path to prevent directory traversal
 	candidates := []string{path}
 	if !strings.HasPrefix(path, "/") {
 		candidates = append(candidates,
@@ -1036,10 +1036,30 @@ func (a *App) fileToDataURL(path string) string {
 		)
 	}
 
+	// Allowed base directories for image loading
+	allowedBases := []string{
+		"/tmp/shell-agent-images/",
+		config.ConfigDir() + "/",
+	}
+
 	var resolvedPath string
 	for _, p := range candidates {
-		if _, err := os.Stat(p); err == nil {
-			resolvedPath = p
+		cleaned := filepath.Clean(p)
+		// For absolute paths, verify they're under an allowed directory
+		if filepath.IsAbs(cleaned) {
+			allowed := false
+			for _, base := range allowedBases {
+				if strings.HasPrefix(cleaned, filepath.Clean(base)) {
+					allowed = true
+					break
+				}
+			}
+			if !allowed {
+				continue
+			}
+		}
+		if _, err := os.Stat(cleaned); err == nil {
+			resolvedPath = cleaned
 			break
 		}
 	}
@@ -1880,6 +1900,11 @@ func (a *App) queryPreviewTool(argsJSON string) string {
 		sqlStr = fmt.Sprintf("%s LIMIT %d", sqlStr, args.Limit)
 	}
 
+	// Enforce read-only SQL
+	if err := analysis.IsReadOnlySQL(sqlStr); err != nil {
+		return fmt.Sprintf("Error: LLM generated unsafe SQL: %v\nSQL: %s", err, sqlStr)
+	}
+
 	// Validate with dry run
 	if err := a.analysis.DryRun(context.Background(), sqlStr); err != nil {
 		return fmt.Sprintf("Generated SQL has error: %v\nSQL: %s", err, sqlStr)
@@ -1909,6 +1934,11 @@ func (a *App) querySQLTool(argsJSON string) string {
 	}
 	if args.SQL == "" {
 		return "Error: sql is required"
+	}
+
+	// Enforce read-only SQL
+	if err := analysis.IsReadOnlySQL(args.SQL); err != nil {
+		return fmt.Sprintf("Error: %v", err)
 	}
 
 	result, err := a.analysis.Execute(context.Background(), args.SQL)
@@ -1975,6 +2005,11 @@ func (a *App) quickSummaryTool(argsJSON string) string {
 		sqlStr = analysis.CleanSQL(resp)
 	} else {
 		return "Error: need sql or question"
+	}
+
+	// Enforce read-only SQL
+	if err := analysis.IsReadOnlySQL(sqlStr); err != nil {
+		return fmt.Sprintf("Error: %v", err)
 	}
 
 	result, err := a.analysis.Execute(context.Background(), sqlStr)

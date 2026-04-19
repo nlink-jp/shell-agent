@@ -431,6 +431,39 @@ func ResultToJSON(result *QueryResult) string {
 	return string(data)
 }
 
+// IsReadOnlySQL checks whether a SQL string is a read-only SELECT statement.
+// Returns an error describing the violation if the SQL contains write operations.
+func IsReadOnlySQL(sqlStr string) error {
+	normalized := strings.TrimSpace(strings.ToUpper(sqlStr))
+
+	// Must start with SELECT, EXPLAIN, DESCRIBE, SHOW, or WITH (CTE)
+	validPrefixes := []string{"SELECT ", "EXPLAIN ", "DESCRIBE ", "SHOW ", "WITH "}
+	valid := false
+	for _, p := range validPrefixes {
+		if strings.HasPrefix(normalized, p) {
+			valid = true
+			break
+		}
+	}
+	if !valid {
+		return fmt.Errorf("only SELECT queries are allowed")
+	}
+
+	// Check for dangerous keywords that could appear in subqueries or CTEs
+	dangerous := []string{
+		"INSERT ", "UPDATE ", "DELETE ", "DROP ", "ALTER ",
+		"CREATE ", "TRUNCATE ", "REPLACE ", "GRANT ", "REVOKE ",
+		"ATTACH ", "DETACH ", "COPY ", "EXPORT ", "IMPORT ",
+	}
+	for _, kw := range dangerous {
+		if strings.Contains(normalized, kw) {
+			return fmt.Errorf("write operation %q is not allowed", strings.TrimSpace(kw))
+		}
+	}
+
+	return nil
+}
+
 // sanitizeIdentifier ensures a table/column name is safe for SQL.
 func sanitizeIdentifier(name string) string {
 	// Allow only alphanumeric and underscore

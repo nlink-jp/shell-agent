@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.7.5] - 2026-04-20
+
+### Fixed
+- Remove `replace` directive for nlk in go.mod — use published `github.com/nlink-jp/nlk v0.5.1` to enable building on any machine without local lib-series checkout
+
 ## [0.7.4] - 2026-04-19
 
 ### Security

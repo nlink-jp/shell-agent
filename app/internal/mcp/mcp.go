@@ -10,13 +10,18 @@ import (
 )
 
 // Guardian manages the mcp-guardian child process over stdio.
+//
+// Concurrency: mu protects all access to stdin/stdout/id and the stopped flag.
+// Both call() and Stop() acquire mu, so a Stop() during an in-flight CallTool
+// waits for the RPC round-trip to finish instead of racing on the pipe write.
 type Guardian struct {
-	cmd    *exec.Cmd
-	stdin  io.WriteCloser
-	stdout *bufio.Scanner
-	mu     sync.Mutex
-	id     int
-	tools  []ToolDef
+	cmd     *exec.Cmd
+	stdin   io.WriteCloser
+	stdout  *bufio.Scanner
+	mu      sync.Mutex
+	id      int
+	tools   []ToolDef
+	stopped bool
 }
 
 // ToolDef represents an MCP tool definition.
@@ -67,12 +72,22 @@ func (g *Guardian) Start() error {
 	return nil
 }
 
-// Stop terminates the mcp-guardian process.
+// Stop terminates the mcp-guardian process. Safe to call concurrently with
+// CallTool() and safe to call multiple times; subsequent calls are no-ops.
 func (g *Guardian) Stop() error {
-	if g.stdin != nil {
-		g.stdin.Close()
+	g.mu.Lock()
+	defer g.mu.Unlock()
+
+	if g.stopped {
+		return nil
 	}
-	if g.cmd.Process != nil {
+	g.stopped = true
+
+	if g.stdin != nil {
+		_ = g.stdin.Close()
+		g.stdin = nil
+	}
+	if g.cmd != nil && g.cmd.Process != nil {
 		return g.cmd.Process.Kill()
 	}
 	return nil
@@ -148,6 +163,10 @@ func (g *Guardian) refreshTools() error {
 func (g *Guardian) call(method string, params any) (*Response, error) {
 	g.mu.Lock()
 	defer g.mu.Unlock()
+
+	if g.stopped || g.stdin == nil {
+		return nil, fmt.Errorf("guardian is stopped")
+	}
 
 	g.id++
 	req := Request{

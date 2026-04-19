@@ -2,6 +2,16 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.7.3] - 2026-04-19
+
+### Security
+- Arbitrary file read via tool result JSON: `extractImageFromResult` now delegates to `fileToDataURL`, inheriting its allowlist of base directories so tool / LLM-supplied `"path":"/etc/passwd"` is rejected instead of returned to the frontend as a base64 data URL
+- Path traversal via `analysis-status` / `analysis-result` `job_id`: LLM-supplied IDs are validated against the `job-<digits>` pattern before being passed to `filepath.Join(analysisDir, ...)`
+- API key no longer exposed in `ps` output: background `analyze` subprocess receives the key via the `SHELL_AGENT_API_KEY` environment variable instead of `--api-key` CLI argument
+- `IsReadOnlySQL` whitespace bypass: dangerous keyword detection rewritten with regex word boundaries (so `DROP\tTABLE` and `DELETE\nFROM` are caught), comments and string literals stripped before scanning, multiple statements rejected, and `LOAD` / `INSTALL` / `PRAGMA` / `EXECUTE` / `VACUUM` added to the deny list (DuckDB extensions can run native code)
+- MCP Guardian stdio race: `Stop()` is now mutex-guarded and idempotent, and `call()` refuses requests after stop instead of write-after-close on the stdin pipe
+- Token-stat data race: `App.tokenStats` is now protected by `statsMu`; reads from Wails bindings (`GetLLMStatus`) and writes from the agent loop are serialized
+
 ## [0.7.2] - 2026-04-19
 
 ### Fixed

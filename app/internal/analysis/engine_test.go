@@ -373,6 +373,62 @@ func TestIsReadOnlySQL(t *testing.T) {
 	}
 }
 
+// TestIsReadOnlySQL_WhitespaceBypass covers the whitespace-boundary bypass
+// that existed before the regex-based rewrite. The old implementation matched
+// dangerous keywords with a trailing literal space, so variants using a tab
+// or newline between the keyword and the target silently passed.
+func TestIsReadOnlySQL_WhitespaceBypass(t *testing.T) {
+	cases := []struct {
+		name string
+		sql  string
+	}{
+		{"tab after DROP", "SELECT 1; DROP\tTABLE users"},
+		{"newline after DELETE", "SELECT 1;\nDELETE\nFROM users"},
+		{"carriage return after ATTACH", "SELECT 1; ATTACH\r'evil.db'"},
+		{"trailing comment hides LOAD", "SELECT 1;\nLOAD\n'ext.so'"},
+		{"INSTALL inside CTE", "WITH x AS (SELECT 1) INSTALL\thttpfs"},
+		{"PRAGMA via whitespace", "SELECT 1; PRAGMA\tenable_profiling"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if err := IsReadOnlySQL(tc.sql); err == nil {
+				t.Errorf("IsReadOnlySQL(%q) should be rejected", tc.sql)
+			}
+		})
+	}
+}
+
+// TestIsReadOnlySQL_CommentInjection verifies that dangerous keywords hidden
+// by comments (which are stripped before scanning) are still evaluated on the
+// stripped remainder — a `-- DROP` comment should not mark the query as bad,
+// but a real `DROP` hidden after a `/* ... */` block still is.
+func TestIsReadOnlySQL_CommentInjection(t *testing.T) {
+	// A keyword that only appears inside a line comment is not dangerous.
+	if err := IsReadOnlySQL("SELECT 1 -- DROP TABLE t"); err != nil {
+		t.Errorf("comment-only DROP should be allowed, got %v", err)
+	}
+	// A keyword that only appears inside a string literal is not dangerous.
+	if err := IsReadOnlySQL("SELECT 'DROP TABLE t' AS msg"); err != nil {
+		t.Errorf("string-literal DROP should be allowed, got %v", err)
+	}
+	// A real DROP after a block comment is still rejected.
+	if err := IsReadOnlySQL("SELECT 1 /* safe */; DROP TABLE t"); err == nil {
+		t.Errorf("real DROP after comment should be rejected")
+	}
+}
+
+// TestIsReadOnlySQL_MultiStatement rejects any query with more than one
+// statement, even when all statements are individually read-only. DuckDB
+// implementations differ on multi-statement handling and we prefer refusal.
+func TestIsReadOnlySQL_MultiStatement(t *testing.T) {
+	if err := IsReadOnlySQL("SELECT 1; SELECT 2"); err == nil {
+		t.Errorf("multi-SELECT should be rejected to keep attack surface minimal")
+	}
+	if err := IsReadOnlySQL("SELECT 1;"); err != nil {
+		t.Errorf("single statement with trailing semicolon should be allowed, got %v", err)
+	}
+}
+
 func TestSanitizeIdentifier(t *testing.T) {
 	tests := []struct {
 		input, want string

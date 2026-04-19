@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.7.2] - 2026-04-19
+
+### Fixed
+- Directory traversal bypass via relative paths: all candidate paths now resolved to absolute via `filepath.Abs()` before allowlist validation, with separator-aware prefix matching
+
 ## [0.7.1] - 2026-04-19
 
 ### Fixed

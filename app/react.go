@@ -137,6 +137,7 @@ func (a *App) agentLoop(ctx context.Context, systemPrompt string, toolDefs []cli
 			al.log("[ROUND %d] final text response (%d chars)", round, len(content))
 			respTime := time.Now()
 			lastIn, lastOut := a.lastTokenUsage()
+			a.sessionMu.Lock()
 			a.session.Records = append(a.session.Records, memory.Record{
 				Timestamp: respTime,
 				Role:      "assistant",
@@ -146,6 +147,7 @@ func (a *App) agentLoop(ctx context.Context, systemPrompt string, toolDefs []cli
 				OutTokens: lastOut,
 			})
 			a.session.UpdatedAt = respTime
+			a.sessionMu.Unlock()
 
 			return ChatMessage{
 				Role:      "assistant",
@@ -158,12 +160,14 @@ func (a *App) agentLoop(ctx context.Context, systemPrompt string, toolDefs []cli
 
 		// Tool calls detected — store assistant message if it has text
 		if strings.TrimSpace(content) != "" {
+			a.sessionMu.Lock()
 			a.session.Records = append(a.session.Records, memory.Record{
 				Timestamp: time.Now(),
 				Role:      "assistant",
 				Content:   content,
 				Tier:      memory.TierHot,
 			})
+			a.sessionMu.Unlock()
 		}
 
 		// Execute each tool call
@@ -221,6 +225,7 @@ func (a *App) agentLoop(ctx context.Context, systemPrompt string, toolDefs []cli
 			}
 			wailsRuntime.EventsEmit(a.ctx, "chat:toolresult", toolResultEvent)
 
+			a.sessionMu.Lock()
 			a.session.Records = append(a.session.Records, memory.Record{
 				Timestamp: time.Now(),
 				Role:      "tool",
@@ -228,6 +233,7 @@ func (a *App) agentLoop(ctx context.Context, systemPrompt string, toolDefs []cli
 				Tier:      memory.TierHot,
 				Images:    toolImages,
 			})
+			a.sessionMu.Unlock()
 		}
 
 		a.autoSave()

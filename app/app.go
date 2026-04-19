@@ -93,8 +93,10 @@ type App struct {
 	pinned   *memory.PinnedStore
 	tools    *toolcall.Registry
 	jobs     *toolcall.JobManager
-	guardians map[string]*mcp.Guardian // name → guardian
-	session    *memory.Session
+	guardiansMu sync.RWMutex
+	guardians   map[string]*mcp.Guardian // name → guardian
+	session     *memory.Session
+	sessionMu   sync.Mutex // protects session.Records access
 
 	// tokenStats is updated from the agent loop goroutine and read from
 	// Wails bindings (e.g. GetLLMStatus). statsMu guards every read/write.
@@ -444,7 +446,10 @@ func (a *App) handleToolCall(tc client.ToolCall) (string, error) {
 	if strings.HasPrefix(tc.Function.Name, "mcp__") {
 		parts := strings.SplitN(strings.TrimPrefix(tc.Function.Name, "mcp__"), "__", 2)
 		if len(parts) == 2 {
-			if g, ok := a.guardians[parts[0]]; ok {
+			a.guardiansMu.RLock()
+			g, ok := a.guardians[parts[0]]
+			a.guardiansMu.RUnlock()
+			if ok {
 				result, err := g.CallTool(parts[1], json.RawMessage(args))
 				if err != nil {
 					return "", err
@@ -539,6 +544,7 @@ func (a *App) RejectMITL() {
 func (a *App) GetTools() []ToolInfo {
 	var infos []ToolInfo
 	// MCP tools from all guardians
+	a.guardiansMu.RLock()
 	for name, g := range a.guardians {
 		for _, t := range g.Tools() {
 			toolName := "mcp__" + name + "__" + t.Name
@@ -550,6 +556,7 @@ func (a *App) GetTools() []ToolInfo {
 			})
 		}
 	}
+	a.guardiansMu.RUnlock()
 	// Shell script tools
 	for _, t := range a.tools.List() {
 		infos = append(infos, ToolInfo{
@@ -576,6 +583,7 @@ func (a *App) RefreshTools() ([]ToolInfo, error) {
 // GetLLMStatus returns the current LLM state for monitoring.
 func (a *App) GetLLMStatus() LLMStatus {
 	var hot, warm, cold int
+	a.sessionMu.Lock()
 	if a.session != nil {
 		for _, r := range a.session.Records {
 			switch r.Tier {
@@ -588,6 +596,7 @@ func (a *App) GetLLMStatus() LLMStatus {
 			}
 		}
 	}
+	a.sessionMu.Unlock()
 	ts := a.snapshotTokenStats()
 	return LLMStatus{
 		CurrentTime:      time.Now().Format("2006-01-02 15:04:05"),
@@ -764,7 +773,7 @@ func (a *App) CopyImageToClipboard(dataURL string) error {
 	}
 	defer os.Remove(tmpFile)
 
-	cmd := exec.Command("osascript", "-e", fmt.Sprintf(`set the clipboard to (read (POSIX file "%s") as «class PNGf»)`, tmpFile))
+	cmd := exec.Command("osascript", "-e", fmt.Sprintf(`set the clipboard to (read (POSIX file %q) as «class PNGf»)`, tmpFile))
 	return cmd.Run()
 }
 
@@ -794,11 +803,17 @@ func (a *App) SaveConfig(cfgJSON string) error {
 // RestartGuardians is called from the frontend to manually restart all guardians.
 func (a *App) RestartGuardians() int {
 	a.restartGuardians()
-	return len(a.guardians)
+	a.guardiansMu.RLock()
+	n := len(a.guardians)
+	a.guardiansMu.RUnlock()
+	return n
 }
 
 // restartGuardians stops all running guardians and starts new ones from config.
 func (a *App) restartGuardians() {
+	a.guardiansMu.Lock()
+	defer a.guardiansMu.Unlock()
+
 	// Stop existing
 	for name, g := range a.guardians {
 		_ = g.Stop()
@@ -1729,6 +1744,7 @@ func (a *App) buildToolDefs() []client.Tool {
 	// Add builtin image tools
 	tools = append(tools, a.builtinTools()...)
 	// Add MCP tools from all guardians (skip disabled)
+	a.guardiansMu.RLock()
 	for name, g := range a.guardians {
 		for _, t := range g.Tools() {
 			toolName := "mcp__" + name + "__" + t.Name
@@ -1745,6 +1761,7 @@ func (a *App) buildToolDefs() []client.Tool {
 			})
 		}
 	}
+	a.guardiansMu.RUnlock()
 	// Add shell script tools (skip disabled)
 	for _, t := range a.tools.List() {
 		if a.isToolDisabled(t.Name) {

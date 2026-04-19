@@ -2,6 +2,14 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.7.4] - 2026-04-19
+
+### Security
+- `session.Records` concurrent access: `sessionMu` guards append (agent loop) and range (Wails bindings) to prevent data race
+- `guardians` map rebuild race: `guardiansMu` (RWMutex) protects all reads (`GetTools`, `buildToolDefs`, `handleToolCall`) during `restartGuardians` rebuild
+- HTTP error body truncated to 512 bytes via `io.LimitReader` to prevent internal server details from leaking into LLM context
+- `osascript` clipboard command uses `%q` for path quoting to prevent injection via poisoned `TMPDIR`
+
 ## [0.7.3] - 2026-04-19
 
 ### Security

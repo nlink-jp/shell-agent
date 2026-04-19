@@ -1020,46 +1020,47 @@ func isImageFilename(s string) bool {
 }
 
 func (a *App) fileToDataURL(path string) string {
-	// Try objstore first by ID (non-absolute paths)
-	if a.objects != nil && !strings.HasPrefix(path, "/") {
+	// Try objstore first by ID (non-absolute paths without traversal)
+	if a.objects != nil && !strings.HasPrefix(path, "/") && !strings.Contains(path, "..") {
 		if du, err := a.objects.LoadAsDataURL(path); err == nil {
 			return du
 		}
 	}
 
-	// Normalize path to prevent directory traversal
 	candidates := []string{path}
 	if !strings.HasPrefix(path, "/") {
 		candidates = append(candidates,
-			"/tmp/shell-agent-images/"+path,
-			config.ConfigDir()+"/images/"+path,
+			filepath.Join("/tmp/shell-agent-images", path),
+			filepath.Join(config.ConfigDir(), "images", path),
 		)
 	}
 
 	// Allowed base directories for image loading
 	allowedBases := []string{
-		"/tmp/shell-agent-images/",
-		config.ConfigDir() + "/",
+		filepath.Clean("/tmp/shell-agent-images"),
+		filepath.Clean(config.ConfigDir()),
 	}
 
 	var resolvedPath string
 	for _, p := range candidates {
-		cleaned := filepath.Clean(p)
-		// For absolute paths, verify they're under an allowed directory
-		if filepath.IsAbs(cleaned) {
-			allowed := false
-			for _, base := range allowedBases {
-				if strings.HasPrefix(cleaned, filepath.Clean(base)) {
-					allowed = true
-					break
-				}
-			}
-			if !allowed {
-				continue
+		// Resolve to absolute path to catch relative traversal
+		absPath, err := filepath.Abs(p)
+		if err != nil {
+			continue
+		}
+		// Verify path is under an allowed directory (separator-aware prefix check)
+		allowed := false
+		for _, base := range allowedBases {
+			if strings.HasPrefix(absPath, base+string(filepath.Separator)) || absPath == base {
+				allowed = true
+				break
 			}
 		}
-		if _, err := os.Stat(cleaned); err == nil {
-			resolvedPath = cleaned
+		if !allowed {
+			continue
+		}
+		if _, err := os.Stat(absPath); err == nil {
+			resolvedPath = absPath
 			break
 		}
 	}

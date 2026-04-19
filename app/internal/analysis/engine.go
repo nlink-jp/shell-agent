@@ -10,12 +10,25 @@ import (
 	"math/big"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"time"
 
 	"github.com/marcboeker/go-duckdb"
 	_ "github.com/marcboeker/go-duckdb"
 )
+
+// dangerousSQLKeywords matches SQL write / data-definition / data-movement
+// operations using word boundaries, so whitespace variants like "DROP\tTABLE"
+// or "DELETE\nFROM" are still detected. LOAD / INSTALL are included because
+// DuckDB extensions can execute arbitrary native code.
+var dangerousSQLKeywords = regexp.MustCompile(
+	`(?i)\b(INSERT|UPDATE|DELETE|DROP|ALTER|CREATE|TRUNCATE|REPLACE|GRANT|REVOKE|ATTACH|DETACH|COPY|EXPORT|IMPORT|LOAD|INSTALL|PRAGMA|EXECUTE|VACUUM)\b`,
+)
+
+// validSQLPrefixes matches the allowed first keyword of a read-only query
+// (using a word boundary so "SELECT\n..." is accepted).
+var validSQLPrefixes = regexp.MustCompile(`(?i)^(SELECT|EXPLAIN|DESCRIBE|SHOW|WITH)\b`)
 
 // Engine provides DuckDB-backed data analysis capabilities.
 type Engine struct {
@@ -433,35 +446,121 @@ func ResultToJSON(result *QueryResult) string {
 
 // IsReadOnlySQL checks whether a SQL string is a read-only SELECT statement.
 // Returns an error describing the violation if the SQL contains write operations.
+//
+// The check is intentionally conservative: dangerous keywords are matched with
+// word boundaries (so "DROP\tTABLE" is caught the same as "DROP TABLE"), and
+// a stripped copy of the query is used so literals / comments cannot influence
+// the decision. Multiple statements (semicolons outside the final position)
+// are rejected outright.
 func IsReadOnlySQL(sqlStr string) error {
-	normalized := strings.TrimSpace(strings.ToUpper(sqlStr))
-
-	// Must start with SELECT, EXPLAIN, DESCRIBE, SHOW, or WITH (CTE)
-	validPrefixes := []string{"SELECT ", "EXPLAIN ", "DESCRIBE ", "SHOW ", "WITH "}
-	valid := false
-	for _, p := range validPrefixes {
-		if strings.HasPrefix(normalized, p) {
-			valid = true
-			break
-		}
+	trimmed := strings.TrimSpace(sqlStr)
+	if trimmed == "" {
+		return fmt.Errorf("empty query")
 	}
-	if !valid {
+
+	// Strip string literals and comments so keywords inside them don't affect
+	// either the prefix check or the dangerous-keyword scan.
+	stripped := stripSQLLiteralsAndComments(trimmed)
+	strippedTrim := strings.TrimSpace(stripped)
+
+	// Must start with a read-only keyword.
+	if !validSQLPrefixes.MatchString(strippedTrim) {
 		return fmt.Errorf("only SELECT queries are allowed")
 	}
 
-	// Check for dangerous keywords that could appear in subqueries or CTEs
-	dangerous := []string{
-		"INSERT ", "UPDATE ", "DELETE ", "DROP ", "ALTER ",
-		"CREATE ", "TRUNCATE ", "REPLACE ", "GRANT ", "REVOKE ",
-		"ATTACH ", "DETACH ", "COPY ", "EXPORT ", "IMPORT ",
+	// Check for dangerous keywords anywhere (including subqueries / CTEs).
+	// Checked before the multi-statement rule so compound attacks like
+	// "SELECT 1; DROP TABLE t" are reported against the dangerous keyword.
+	if m := dangerousSQLKeywords.FindString(strippedTrim); m != "" {
+		return fmt.Errorf("write operation %q is not allowed", strings.ToUpper(m))
 	}
-	for _, kw := range dangerous {
-		if strings.Contains(normalized, kw) {
-			return fmt.Errorf("write operation %q is not allowed", strings.TrimSpace(kw))
-		}
+
+	// Reject multi-statement queries (a single trailing semicolon is OK).
+	core := strings.TrimRight(strippedTrim, "; \t\r\n")
+	if strings.Contains(core, ";") {
+		return fmt.Errorf("multiple statements are not allowed")
 	}
 
 	return nil
+}
+
+// stripSQLLiteralsAndComments replaces string literals (both '...' and "...")
+// and SQL comments (-- line, /* block */) with spaces. This lets IsReadOnlySQL
+// scan the query for dangerous keywords without false positives from string
+// content and without being bypassed by tricks like putting DROP inside a
+// comment followed by a newline.
+func stripSQLLiteralsAndComments(s string) string {
+	var b strings.Builder
+	b.Grow(len(s))
+
+	i := 0
+	for i < len(s) {
+		c := s[i]
+
+		// Line comment: -- ... \n
+		if c == '-' && i+1 < len(s) && s[i+1] == '-' {
+			for i < len(s) && s[i] != '\n' {
+				b.WriteByte(' ')
+				i++
+			}
+			continue
+		}
+
+		// Block comment: /* ... */
+		if c == '/' && i+1 < len(s) && s[i+1] == '*' {
+			b.WriteString("  ")
+			i += 2
+			for i+1 < len(s) && !(s[i] == '*' && s[i+1] == '/') {
+				b.WriteByte(' ')
+				i++
+			}
+			if i+1 < len(s) {
+				b.WriteString("  ")
+				i += 2
+			}
+			continue
+		}
+
+		// Single-quoted string literal; SQL escapes '' as a literal quote.
+		if c == '\'' {
+			b.WriteByte(' ')
+			i++
+			for i < len(s) {
+				if s[i] == '\'' {
+					if i+1 < len(s) && s[i+1] == '\'' {
+						b.WriteString("  ")
+						i += 2
+						continue
+					}
+					b.WriteByte(' ')
+					i++
+					break
+				}
+				b.WriteByte(' ')
+				i++
+			}
+			continue
+		}
+
+		// Double-quoted identifier / string; treat the same way for scanning.
+		if c == '"' {
+			b.WriteByte(' ')
+			i++
+			for i < len(s) && s[i] != '"' {
+				b.WriteByte(' ')
+				i++
+			}
+			if i < len(s) {
+				b.WriteByte(' ')
+				i++
+			}
+			continue
+		}
+
+		b.WriteByte(c)
+		i++
+	}
+	return b.String()
 }
 
 // sanitizeIdentifier ensures a table/column name is safe for SQL.

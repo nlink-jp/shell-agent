@@ -332,6 +332,47 @@ func TestExportQuery(t *testing.T) {
 	}
 }
 
+func TestIsReadOnlySQL(t *testing.T) {
+	// Valid read-only queries
+	valid := []string{
+		"SELECT * FROM t",
+		"select count(*) from t",
+		"  SELECT 1",
+		"EXPLAIN SELECT * FROM t",
+		"DESCRIBE t",
+		"SHOW TABLES",
+		"WITH cte AS (SELECT 1) SELECT * FROM cte",
+	}
+	for _, sql := range valid {
+		if err := IsReadOnlySQL(sql); err != nil {
+			t.Errorf("IsReadOnlySQL(%q) should be valid, got: %v", sql, err)
+		}
+	}
+
+	// Invalid write queries
+	invalid := []struct {
+		sql  string
+		want string
+	}{
+		{"INSERT INTO t VALUES (1)", "only SELECT"},
+		{"DELETE FROM t", "only SELECT"},
+		{"DROP TABLE t", "only SELECT"},
+		{"UPDATE t SET x=1", "only SELECT"},
+		{"CREATE TABLE t (id INT)", "only SELECT"},
+		{"SELECT * FROM t; DROP TABLE t", "DROP"},
+		{"TRUNCATE t", "only SELECT"},
+		{"COPY t TO '/tmp/out.csv'", "only SELECT"},
+	}
+	for _, tt := range invalid {
+		err := IsReadOnlySQL(tt.sql)
+		if err == nil {
+			t.Errorf("IsReadOnlySQL(%q) should fail", tt.sql)
+		} else if !containsStr(err.Error(), tt.want) {
+			t.Errorf("IsReadOnlySQL(%q) error = %v, want containing %q", tt.sql, err, tt.want)
+		}
+	}
+}
+
 func TestSanitizeIdentifier(t *testing.T) {
 	tests := []struct {
 		input, want string

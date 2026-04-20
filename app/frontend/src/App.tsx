@@ -330,9 +330,11 @@ function App() {
   }
 
   async function handleNewSession() {
+    if (streaming && !confirm('Processing is in progress. Start a new session? Current results may be lost.')) {
+      return;
+    }
     const id = await NewSession();
     setMessages([]);
-    // Immediately show the new session in the list
     const now = new Date().toLocaleString('ja-JP', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' });
     setSessions(prev => [{ id, title: 'New Chat', updated_at: now }, ...prev]);
     refreshStatus();
@@ -441,6 +443,9 @@ function App() {
   }
 
   async function handleLoadSession(id: string) {
+    if (streaming && !confirm('Processing is in progress. Switch session? Current results may be lost.')) {
+      return;
+    }
     try {
       const msgs = await LoadSession(id);
       setMessages(convertLoadedMessages(msgs || []));

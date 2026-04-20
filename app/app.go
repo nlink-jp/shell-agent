@@ -379,6 +379,13 @@ func (a *App) SendMessage(content string) (ChatMessage, error) {
 	return a.sendMessage(content, nil)
 }
 
+// isProcessing returns true if an agent loop or tool is currently running.
+func (a *App) isProcessing() bool {
+	a.cancelMu.Lock()
+	defer a.cancelMu.Unlock()
+	return a.cancelFn != nil
+}
+
 // CancelExecution cancels any ongoing tool execution or LLM call.
 func (a *App) CancelExecution() {
 	a.cancelMu.Lock()

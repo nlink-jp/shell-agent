@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"embed"
 	"os"
 
@@ -9,6 +10,7 @@ import (
 	"github.com/wailsapp/wails/v2/pkg/options"
 	"github.com/wailsapp/wails/v2/pkg/options/assetserver"
 	"github.com/wailsapp/wails/v2/pkg/options/mac"
+	wailsRuntime "github.com/wailsapp/wails/v2/pkg/runtime"
 )
 
 // version is set at build time via -ldflags "-X main.version=..."
@@ -37,6 +39,21 @@ func main() {
 		BackgroundColour: &options.RGBA{R: 27, G: 38, B: 54, A: 1},
 		OnStartup:        app.startup,
 		OnShutdown:       app.shutdown,
+		OnBeforeClose: func(ctx context.Context) (prevent bool) {
+			if app.isProcessing() {
+				dialog, err := wailsRuntime.MessageDialog(ctx, wailsRuntime.MessageDialogOptions{
+					Type:          wailsRuntime.QuestionDialog,
+					Title:         "Processing in progress",
+					Message:       "An analysis or tool is currently running. Quit anyway? Results may be lost.",
+					DefaultButton: "No",
+					Buttons:       []string{"Yes", "No"},
+				})
+				if err != nil || dialog == "No" {
+					return true // prevent close
+				}
+			}
+			return false
+		},
 		Bind: []interface{}{
 			app,
 		},

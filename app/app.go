@@ -206,8 +206,10 @@ func (a *App) startup(ctx context.Context) {
 	a.pinned = pinned
 
 	a.tools = toolcall.NewRegistry(config.ExpandPath(cfg.Tools.ScriptDir))
-	toolCount := a.tools.Scan()
-	log.Info("tools: %d scripts loaded from %s", toolCount, cfg.Tools.ScriptDir)
+	if err := a.tools.Scan(); err != nil {
+		log.Warn("tool scan: %v", err)
+	}
+	log.Info("tools: %d scripts loaded from %s", len(a.tools.List()), config.ExpandPath(cfg.Tools.ScriptDir))
 
 	a.jobs = toolcall.NewJobManager()
 
@@ -402,6 +404,7 @@ func (a *App) sendMessage(content string, images []string) (ChatMessage, error) 
 
 	// Rotate guard tag per turn for prompt injection defense
 	a.guardTag = guard.NewTag()
+	log.Debug("guard tag rotated")
 
 	// Save images to disk and create references
 	var imageEntries []memory.ImageEntry
@@ -416,6 +419,7 @@ func (a *App) sendMessage(content string, images []string) (ChatMessage, error) 
 		}
 	}
 
+	a.sessionMu.Lock()
 	a.session.Records = append(a.session.Records, memory.Record{
 		Timestamp: now,
 		Role:      "user",
@@ -423,6 +427,8 @@ func (a *App) sendMessage(content string, images []string) (ChatMessage, error) 
 		Tier:      memory.TierHot,
 		Images:    imageEntries,
 	})
+	a.sessionMu.Unlock()
+	log.Debug("user record saved")
 
 	toolDefs := a.buildToolDefs()
 	log.Info("tools: %d definitions", len(toolDefs))

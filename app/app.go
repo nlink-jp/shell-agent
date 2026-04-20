@@ -239,6 +239,7 @@ func (a *App) startup(ctx context.Context) {
 
 	// Start mcp-guardian instances
 	a.guardians = make(map[string]*mcp.Guardian)
+	log.Info("starting %d guardians", len(cfg.Guardians))
 	a.restartGuardians()
 	log.Info("startup complete")
 }
@@ -1776,7 +1777,7 @@ func (a *App) buildToolDefs() []client.Tool {
 	var tools []client.Tool
 	// Add builtin image tools
 	tools = append(tools, a.builtinTools()...)
-	log.Debug("builtin: %d", len(tools))
+	log.Debug("builtin: %d tools", len(tools))
 	// Add MCP tools from all guardians (skip disabled)
 	a.guardiansMu.RLock()
 	for name, g := range a.guardians {

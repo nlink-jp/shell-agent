@@ -7,6 +7,7 @@ import (
 	"io"
 	"os/exec"
 	"sync"
+	"time"
 )
 
 // Guardian manages the mcp-guardian child process over stdio.
@@ -38,7 +39,12 @@ func NewGuardian(binaryPath string, args ...string) *Guardian {
 	}
 }
 
+// StartTimeout is the maximum time to wait for a guardian to initialize.
+const StartTimeout = 15 * time.Second
+
 // Start launches the mcp-guardian process and initializes the MCP session.
+// The initialization (JSON-RPC handshake + tool listing) must complete within
+// StartTimeout or the guardian is killed and an error is returned.
 func (g *Guardian) Start() error {
 	var err error
 	g.stdin, err = g.cmd.StdinPipe()
@@ -57,19 +63,34 @@ func (g *Guardian) Start() error {
 		return fmt.Errorf("start guardian: %w", err)
 	}
 
-	// Initialize MCP session
-	if err := g.initialize(); err != nil {
-		g.Stop()
-		return fmt.Errorf("MCP initialize: %w", err)
-	}
+	// Run initialization with timeout to prevent hanging the entire app
+	// when the guardian binary exists but the MCP server doesn't respond.
+	done := make(chan error, 1)
+	go func() {
+		// Initialize MCP session
+		if err := g.initialize(); err != nil {
+			done <- fmt.Errorf("MCP initialize: %w", err)
+			return
+		}
+		// Fetch available tools
+		if err := g.refreshTools(); err != nil {
+			done <- fmt.Errorf("MCP tools/list: %w", err)
+			return
+		}
+		done <- nil
+	}()
 
-	// Fetch available tools
-	if err := g.refreshTools(); err != nil {
+	select {
+	case err := <-done:
+		if err != nil {
+			g.Stop()
+			return err
+		}
+		return nil
+	case <-time.After(StartTimeout):
 		g.Stop()
-		return fmt.Errorf("MCP tools/list: %w", err)
+		return fmt.Errorf("guardian start timed out after %s", StartTimeout)
 	}
-
-	return nil
 }
 
 // Stop terminates the mcp-guardian process. Safe to call concurrently with

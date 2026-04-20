@@ -182,7 +182,7 @@ function App() {
       const now = new Date().toLocaleTimeString('ja-JP', { hour12: false });
       setMessages(prev => [...prev, {
         role: 'tool',
-        content: `**${res.name}**\n\n${res.result}`,
+        content: output,
         timestamp: now,
         imageIds: res.imageId ? [res.imageId] : undefined,
       }]);

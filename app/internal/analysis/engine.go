@@ -435,7 +435,9 @@ func normalizeValue(v any) any {
 // FormatResultSummary builds a context string for LLM conversation history.
 func FormatResultSummary(result *QueryResult) string {
 	var sb strings.Builder
-	fmt.Fprintf(&sb, "SQL: %s\n", result.SQL)
+	// Wrap SQL in a code block to prevent Markdown interpretation of
+	// characters like *, |, _ that appear in SQL expressions.
+	fmt.Fprintf(&sb, "```sql\n%s\n```\n", result.SQL)
 	fmt.Fprintf(&sb, "Result: %d rows, columns: %s\n", result.RowCount, strings.Join(result.Columns, ", "))
 
 	sampleCount := result.RowCount

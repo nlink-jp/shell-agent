@@ -2025,12 +2025,12 @@ func (a *App) queryPreviewTool(argsJSON string) string {
 
 	// Enforce read-only SQL
 	if err := analysis.IsReadOnlySQL(sqlStr); err != nil {
-		return fmt.Sprintf("Error: LLM generated unsafe SQL: %v\nSQL: %s", err, sqlStr)
+		return fmt.Sprintf("Error: LLM generated unsafe SQL: %v\n```sql\n%s\n```", err, sqlStr)
 	}
 
 	// Validate with dry run
 	if err := a.analysis.DryRun(context.Background(), sqlStr); err != nil {
-		return fmt.Sprintf("Generated SQL has error: %v\nSQL: %s", err, sqlStr)
+		return fmt.Sprintf("Generated SQL has error: %v\n```sql\n%s\n```", err, sqlStr)
 	}
 
 	// Execute
@@ -2039,10 +2039,10 @@ func (a *App) queryPreviewTool(argsJSON string) string {
 		return fmt.Sprintf("Error executing: %v", err)
 	}
 	if result.Error != "" {
-		return fmt.Sprintf("Query error: %s\nSQL: %s", result.Error, sqlStr)
+		return fmt.Sprintf("Query error: %s\n```sql\n%s\n```", result.Error, sqlStr)
 	}
 
-	return fmt.Sprintf("SQL: %s\n\n%s", sqlStr, analysis.FormatResultSummary(result))
+	return analysis.FormatResultSummary(result)
 }
 
 func (a *App) querySQLTool(argsJSON string) string {
@@ -2151,10 +2151,10 @@ func (a *App) quickSummaryTool(argsJSON string) string {
 
 	summary, err := summarizer.SummarizeResult(context.Background(), result)
 	if err != nil {
-		return fmt.Sprintf("SQL: %s\n\n%s\n\n(Summary failed: %v)", sqlStr, analysis.FormatResultSummary(result), err)
+		return fmt.Sprintf("%s\n\n(Summary failed: %v)", analysis.FormatResultSummary(result), err)
 	}
 
-	return fmt.Sprintf("SQL: %s\nRows: %d\n\nSummary:\n%s", sqlStr, result.RowCount, summary)
+	return fmt.Sprintf("```sql\n%s\n```\nRows: %d\n\nSummary:\n%s", sqlStr, result.RowCount, summary)
 }
 
 // analyzeDataTool runs sliding window analysis in-process (synchronous).

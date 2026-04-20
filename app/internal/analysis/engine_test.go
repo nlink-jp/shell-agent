@@ -456,7 +456,7 @@ func TestFormatResultSummary(t *testing.T) {
 		RowCount: 2,
 	}
 	s := FormatResultSummary(result)
-	if !contains(s, "SQL: SELECT 1") {
+	if !contains(s, "SELECT 1") {
 		t.Errorf("summary missing SQL: %s", s)
 	}
 	if !contains(s, "2 rows") {

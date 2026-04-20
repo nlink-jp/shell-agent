@@ -88,7 +88,8 @@ func DefaultConfig() *Config {
 		Tools: ToolsConfig{
 			ScriptDir: filepath.Join(ConfigDir(), "tools"),
 		},
-		Guardians: []GuardianConfig{},
+		Guardians:   []GuardianConfig{},
+		StartupMode: "last",
 	}
 }
 

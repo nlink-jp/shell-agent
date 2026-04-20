@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.7.8] - 2026-04-20
+
+### Fixed
+- Analysis table metadata rebuilt on startup from DuckDB — restoring a session with loaded data now correctly exposes analysis tools
+
 ## [0.7.7] - 2026-04-20
 
 ### Changed

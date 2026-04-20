@@ -107,6 +107,7 @@ type App struct {
 	// Analysis engine (DuckDB)
 	analysis      *analysis.Engine
 	analysisDir   string // directory for analysis results
+	jobMonitor    *JobMonitor
 
 	// Security: nonce tag for prompt injection defense (rotated per turn)
 	guardTag guard.Tag
@@ -229,6 +230,10 @@ func (a *App) startup(ctx context.Context) {
 		a.NewSession()
 		log.Info("new session")
 	}
+
+	// Initialize job monitor for async tasks
+	a.jobMonitor = newJobMonitor()
+	a.jobMonitor.SetContext(ctx)
 
 	// Initialize analysis engine (DuckDB)
 	a.analysisDir = filepath.Join(config.ConfigDir(), "analysis")
@@ -611,6 +616,60 @@ func (a *App) RefreshTools() ([]ToolInfo, error) {
 		return nil, err
 	}
 	return a.GetTools(), nil
+}
+
+// GetBackgroundJobs returns all tracked background jobs for the frontend.
+func (a *App) GetBackgroundJobs() []JobCardInfo {
+	if a.jobMonitor == nil {
+		return nil
+	}
+	return a.jobMonitor.GetJobs()
+}
+
+// AcceptJobResult is called when user clicks "Review now" on a completed job.
+func (a *App) AcceptJobResult(jobID string) {
+	if a.jobMonitor != nil {
+		a.jobMonitor.AcceptJobResult(jobID)
+	}
+}
+
+// DeferJobResult is called when user clicks "Later" on a completed job.
+func (a *App) DeferJobResult(jobID string) {
+	if a.jobMonitor != nil {
+		a.jobMonitor.DeferJobResult(jobID)
+	}
+}
+
+// ReviewJobResult triggers the LLM to read and present a completed job's report.
+// Called from frontend when user clicks a completed job card.
+func (a *App) ReviewJobResult(jobID string) (ChatMessage, error) {
+	if !isValidAnalysisJobID(jobID) {
+		return ChatMessage{}, fmt.Errorf("invalid job_id")
+	}
+
+	reportPath := filepath.Join(a.analysisDir, jobID, "report.md")
+	data, err := os.ReadFile(reportPath)
+	if err != nil {
+		return ChatMessage{}, fmt.Errorf("report not found for %s", jobID)
+	}
+
+	report := string(data)
+	if len(report) > 10000 {
+		report = report[:10000] + "\n\n... (truncated)"
+	}
+
+	// Inject as tool result and trigger agent loop
+	a.sessionMu.Lock()
+	a.session.Records = append(a.session.Records, memory.Record{
+		Timestamp: time.Now(),
+		Role:      "tool",
+		Content:   fmt.Sprintf("[Background analysis %s completed]\n\n%s", jobID, report),
+		Tier:      memory.TierHot,
+	})
+	a.sessionMu.Unlock()
+
+	// Trigger LLM to respond
+	return a.sendMessage(fmt.Sprintf("Background analysis %s has completed. Please summarize the results.", jobID), nil)
 }
 
 // GetLLMStatus returns the current LLM state for monitoring.
@@ -2199,7 +2258,12 @@ func (a *App) analyzeBgTool(argsJSON string) string {
 		return fmt.Sprintf("Error starting background analysis: %v", err)
 	}
 
-	return fmt.Sprintf("Background analysis started.\nJob ID: %s\nUse analysis-status to check progress.", jobID)
+	// Register with job monitor for progress tracking and completion notification
+	if a.jobMonitor != nil {
+		a.jobMonitor.Track(jobID, args.Prompt, outputDir)
+	}
+
+	return fmt.Sprintf("Background analysis started.\nJob ID: %s\nProgress and completion will be shown in the UI.", jobID)
 }
 
 // isValidAnalysisJobID returns true if id matches the "job-<digits>" pattern
@@ -2478,7 +2542,7 @@ func (a *App) analysisTools() []client.Tool {
 			Type: "function",
 			Function: client.ToolFunction{
 				Name:        "analyze-bg",
-				Description: "Start a background analysis that runs independently. Use for large datasets or deep analysis that takes time. The analysis continues even if Shell Agent is closed.",
+				Description: "Start a background analysis that runs independently. Use for large datasets or deep analysis that takes time. The analysis continues even if Shell Agent is closed. The user will be notified in the UI when the analysis completes — do NOT promise to notify them yourself or say you will check status automatically.",
 				Parameters: map[string]any{
 					"type": "object",
 					"properties": map[string]any{

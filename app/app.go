@@ -1771,9 +1771,12 @@ func (a *App) expandImageRecall(content string) (string, string) {
 }
 
 func (a *App) buildToolDefs() []client.Tool {
+	log := logger.New("tooldef")
+	log.Debug("building tool definitions")
 	var tools []client.Tool
 	// Add builtin image tools
 	tools = append(tools, a.builtinTools()...)
+	log.Debug("builtin: %d", len(tools))
 	// Add MCP tools from all guardians (skip disabled)
 	a.guardiansMu.RLock()
 	for name, g := range a.guardians {
@@ -1793,6 +1796,7 @@ func (a *App) buildToolDefs() []client.Tool {
 		}
 	}
 	a.guardiansMu.RUnlock()
+	log.Debug("mcp: %d total so far", len(tools))
 	// Add shell script tools (skip disabled)
 	for _, t := range a.tools.List() {
 		if a.isToolDisabled(t.Name) {
@@ -1820,6 +1824,7 @@ func (a *App) buildToolDefs() []client.Tool {
 			},
 		})
 	}
+	log.Debug("shell: %d total so far", len(tools))
 	// Add analysis tools (skip disabled)
 	for _, t := range a.analysisTools() {
 		if !a.isToolDisabled(t.Function.Name) {

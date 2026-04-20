@@ -3,66 +3,31 @@ package main
 import (
 	"context"
 	"fmt"
-	"log"
-	"os"
-	"path/filepath"
 	"strings"
 	"time"
 
 	"github.com/nlink-jp/nlk/jsonfix"
-	"github.com/nlink-jp/shell-agent/internal/objstore"
 	"github.com/nlink-jp/nlk/strip"
 	"github.com/nlink-jp/shell-agent/internal/client"
-	"github.com/nlink-jp/shell-agent/internal/config"
+	"github.com/nlink-jp/shell-agent/internal/logger"
 	"github.com/nlink-jp/shell-agent/internal/memory"
+	"github.com/nlink-jp/shell-agent/internal/objstore"
 	wailsRuntime "github.com/wailsapp/wails/v2/pkg/runtime"
 )
-
-// agentLog provides structured logging for the agent loop.
-type agentLog struct {
-	logger *log.Logger
-	file   *os.File
-}
-
-func newAgentLog() *agentLog {
-	logDir := filepath.Join(config.ConfigDir(), "logs")
-	_ = os.MkdirAll(logDir, 0o755)
-	logPath := filepath.Join(logDir, "react.log")
-
-	f, err := os.OpenFile(logPath, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o644)
-	if err != nil {
-		return &agentLog{logger: log.New(os.Stderr, "[agent] ", log.LstdFlags)}
-	}
-	return &agentLog{
-		logger: log.New(f, "", log.LstdFlags),
-		file:   f,
-	}
-}
-
-func (l *agentLog) close() {
-	if l.file != nil {
-		l.file.Close()
-	}
-}
-
-func (l *agentLog) log(format string, args ...any) {
-	l.logger.Printf(format, args...)
-}
 
 // agentLoop runs a simple tool-calling feedback loop.
 // LLM is called with tools → if tool calls, execute → feed back → repeat.
 // Loop ends when LLM returns text (no tool calls) or max rounds reached.
 func (a *App) agentLoop(ctx context.Context, systemPrompt string, toolDefs []client.Tool) (ChatMessage, error) {
-	al := newAgentLog()
-	defer al.close()
+	al := logger.New("agent")
 
 	// Reset phase display for new turn
 	wailsRuntime.EventsEmit(a.ctx, "chat:phase", nil)
 
-	al.log("════════════════════════════════════════")
-	al.log("=== NEW TURN === tools=%d", len(toolDefs))
+	al.Debug("════════════════════════════════════════")
+	al.Debug("=== NEW TURN === tools=%d", len(toolDefs))
 	for _, t := range toolDefs {
-		al.log("  tool: %s", t.Function.Name)
+		al.Debug("  tool: %s", t.Function.Name)
 	}
 
 	maxRounds := a.cfg.Memory.MaxToolRounds
@@ -79,7 +44,7 @@ func (a *App) agentLoop(ctx context.Context, systemPrompt string, toolDefs []cli
 		}
 
 		messages := a.buildMessages(systemPrompt)
-		al.log("[ROUND %d] messages=%d tools=%d", round, len(messages), len(toolDefs))
+		al.Debug("[ROUND %d] messages=%d tools=%d", round, len(messages), len(toolDefs))
 
 		resp, err := a.llm.ChatWithContext(ctx, messages, toolDefs)
 		if err != nil {
@@ -89,7 +54,7 @@ func (a *App) agentLoop(ctx context.Context, systemPrompt string, toolDefs []cli
 					Timestamp: time.Now().Format("15:04:05"),
 				}, nil
 			}
-			al.log("[ROUND %d] error: %v", round, err)
+			al.Debug("[ROUND %d] error: %v", round, err)
 			return ChatMessage{}, err
 		}
 
@@ -97,7 +62,7 @@ func (a *App) agentLoop(ctx context.Context, systemPrompt string, toolDefs []cli
 		a.addTokenUsage(resp.Usage.PromptTokens, resp.Usage.CompletionTokens)
 
 		if len(resp.Choices) == 0 {
-			al.log("[ROUND %d] empty choices", round)
+			al.Debug("[ROUND %d] empty choices", round)
 			continue
 		}
 
@@ -105,21 +70,21 @@ func (a *App) agentLoop(ctx context.Context, systemPrompt string, toolDefs []cli
 		content := strip.ThinkTags(choice.Message.Content)
 		content = stripLeakedTimestamps(content)
 
-		al.log("[ROUND %d] tool_calls=%d content_len=%d", round, len(choice.Message.ToolCalls), len(content))
+		al.Debug("[ROUND %d] tool_calls=%d content_len=%d", round, len(choice.Message.ToolCalls), len(content))
 
 		// Check for gemma-style text-based tool calls
 		if len(choice.Message.ToolCalls) == 0 {
 			if parsed := parseGemmaToolCalls(content); len(parsed) > 0 {
-				al.log("[ROUND %d] gemma tags: %d tool calls", round, len(parsed))
+				al.Debug("[ROUND %d] gemma tags: %d tool calls", round, len(parsed))
 				for _, tc := range parsed {
-					al.log("[ROUND %d]   gemma: %s(%s)", round, tc.Function.Name, truncate(tc.Function.Arguments, 100))
+					al.Debug("[ROUND %d]   gemma: %s(%s)", round, tc.Function.Name, truncate(tc.Function.Arguments, 100))
 				}
 				choice.Message.ToolCalls = parsed
 				content = stripGemmaToolCallTags(content)
 			}
 		} else {
 			for _, tc := range choice.Message.ToolCalls {
-				al.log("[ROUND %d]   API: %s(%s)", round, tc.Function.Name, truncate(tc.Function.Arguments, 100))
+				al.Debug("[ROUND %d]   API: %s(%s)", round, tc.Function.Name, truncate(tc.Function.Arguments, 100))
 			}
 		}
 
@@ -130,11 +95,11 @@ func (a *App) agentLoop(ctx context.Context, systemPrompt string, toolDefs []cli
 		if len(choice.Message.ToolCalls) == 0 {
 			content = strings.TrimSpace(content)
 			if content == "" {
-				al.log("[ROUND %d] empty text, continuing", round)
+				al.Debug("[ROUND %d] empty text, continuing", round)
 				continue
 			}
 
-			al.log("[ROUND %d] final text response (%d chars)", round, len(content))
+			al.Debug("[ROUND %d] final text response (%d chars)", round, len(content))
 			respTime := time.Now()
 			lastIn, lastOut := a.lastTokenUsage()
 			a.sessionMu.Lock()
@@ -171,21 +136,21 @@ func (a *App) agentLoop(ctx context.Context, systemPrompt string, toolDefs []cli
 		}
 
 		// Execute each tool call
-		al.log("[ROUND %d] executing %d tool calls", round, len(choice.Message.ToolCalls))
+		al.Debug("[ROUND %d] executing %d tool calls", round, len(choice.Message.ToolCalls))
 		wailsRuntime.EventsEmit(a.ctx, "chat:phase", fmt.Sprintf("execute (round %d)", round+1))
 
 		for _, tc := range choice.Message.ToolCalls {
-			al.log("[ROUND %d]   calling: %s", round, tc.Function.Name)
+			al.Debug("[ROUND %d]   calling: %s", round, tc.Function.Name)
 			wailsRuntime.EventsEmit(a.ctx, "chat:tool_executing", map[string]string{
 				"name": tc.Function.Name,
 				"args": tc.Function.Arguments,
 			})
 			result, tcErr := a.handleToolCall(tc)
 			if tcErr != nil {
-				al.log("[ROUND %d]   error: %v", round, tcErr)
+				al.Debug("[ROUND %d]   error: %v", round, tcErr)
 				result = fmt.Sprintf("Error: %v", tcErr)
 			} else {
-				al.log("[ROUND %d]   result: %s", round, truncate(result, 200))
+				al.Debug("[ROUND %d]   result: %s", round, truncate(result, 200))
 			}
 
 			// Save image to ImageStore and emit ID (not data URL)
@@ -240,7 +205,7 @@ func (a *App) agentLoop(ctx context.Context, systemPrompt string, toolDefs []cli
 		wailsRuntime.EventsEmit(a.ctx, "chat:thinking", nil)
 	}
 
-	al.log("max rounds reached")
+	al.Debug("max rounds reached")
 	wailsRuntime.EventsEmit(a.ctx, "chat:phase", nil)
 
 	return ChatMessage{

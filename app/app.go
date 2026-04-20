@@ -170,7 +170,7 @@ func (a *App) startup(ctx context.Context) {
 	// Initialize logger before anything else
 	logger.Init(filepath.Join(config.ConfigDir(), "logs"))
 	log := logger.New("startup")
-	log.Info("shell-agent starting")
+	log.Info("shell-agent %s starting", version)
 
 	cfg, err := config.Load()
 	if err != nil {
@@ -670,6 +670,11 @@ func (a *App) ReviewJobResult(jobID string) (ChatMessage, error) {
 
 	// Trigger LLM to respond
 	return a.sendMessage(fmt.Sprintf("Background analysis %s has completed. Please summarize the results.", jobID), nil)
+}
+
+// GetVersion returns the build version string.
+func (a *App) GetVersion() string {
+	return version
 }
 
 // GetLLMStatus returns the current LLM state for monitoring.

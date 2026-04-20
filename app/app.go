@@ -872,7 +872,29 @@ func (a *App) restartGuardians() {
 	}
 
 	// Refresh tools in frontend
-	wailsRuntime.EventsEmit(a.ctx, "chat:tools_updated", a.GetTools())
+	// Note: build tool list inline instead of calling GetTools() which would
+	// try to acquire guardiansMu.RLock — deadlock since we hold the write lock.
+	var infos []ToolInfo
+	for name, g := range a.guardians {
+		for _, t := range g.Tools() {
+			toolName := "mcp__" + name + "__" + t.Name
+			infos = append(infos, ToolInfo{
+				Name:        toolName,
+				Description: "[" + name + "] " + t.Description,
+				Category:    "mcp",
+				Enabled:     !a.isToolDisabled(toolName),
+			})
+		}
+	}
+	for _, t := range a.tools.List() {
+		infos = append(infos, ToolInfo{
+			Name:        t.Name,
+			Description: t.Description,
+			Category:    string(t.Category),
+			Enabled:     !a.isToolDisabled(t.Name),
+		})
+	}
+	wailsRuntime.EventsEmit(a.ctx, "chat:tools_updated", infos)
 }
 
 // generateTitleIfNeeded generates a session title from the first exchange.

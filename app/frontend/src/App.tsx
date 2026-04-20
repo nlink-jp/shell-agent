@@ -14,6 +14,7 @@ import {
   GetConfig, SaveConfig, RestartGuardians, CancelExecution,
   SaveSidebarState, ToggleTool, SaveImageToFile, CopyImageToClipboard,
   SaveReport, GetImageDataURL,
+  GetBackgroundJobs, AcceptJobResult, DeferJobResult, ReviewJobResult,
 } from '../wailsjs/go/main/App';
 import { EventsOn } from '../wailsjs/runtime/runtime';
 
@@ -68,6 +69,22 @@ interface ToolResult {
   image?: string;
 }
 
+interface JobCardInfo {
+  job_id: string;
+  prompt: string;
+  started_at: string;
+  progress: string;
+  state: string;
+  reviewed: boolean;
+}
+
+interface JobCompletedAsk {
+  job_id: string;
+  prompt: string;
+  finding_count: number;
+  progress: string;
+}
+
 interface PinnedMemory {
   fact: string;
   native_fact: string;
@@ -92,6 +109,8 @@ function App() {
   const [showSettings, setShowSettings] = useState(false);
   const [settings, setSettings] = useState<any>(null);
   const [lightboxImage, setLightboxImage] = useState<string | null>(null);
+  const [backgroundJobs, setBackgroundJobs] = useState<JobCardInfo[]>([]);
+  const [jobCompletedAsk, setJobCompletedAsk] = useState<JobCompletedAsk | null>(null);
   const [expandedReport, setExpandedReport] = useState<{ title: string; filename: string; content: string; imageIds?: string[] } | null>(null);
   // Note: expandedReport.content comes from msg.content, not msg.report.content
   const [sidebarWidth, setSidebarWidth] = useState(280);
@@ -218,6 +237,36 @@ function App() {
       ListSessions().then((s) => setSessions(s || []));
     });
 
+    const offJobStarted = EventsOn('chat:job_started', (info: { job_id: string; prompt: string }) => {
+      setBackgroundJobs(prev => [...prev, {
+        job_id: info.job_id,
+        prompt: info.prompt,
+        started_at: new Date().toLocaleTimeString('ja-JP', { hour12: false }),
+        progress: 'starting',
+        state: 'running',
+        reviewed: false,
+      }]);
+    });
+
+    const offJobProgress = EventsOn('chat:job_progress', (info: { job_id: string; progress: string; state: string }) => {
+      setBackgroundJobs(prev => prev.map(j =>
+        j.job_id === info.job_id ? { ...j, progress: info.progress, state: info.state } : j
+      ));
+    });
+
+    const offJobCompletedAsk = EventsOn('chat:job_completed_ask', (info: JobCompletedAsk) => {
+      setBackgroundJobs(prev => prev.map(j =>
+        j.job_id === info.job_id ? { ...j, state: 'done', progress: info.progress } : j
+      ));
+      setJobCompletedAsk(info);
+    });
+
+    const offJobError = EventsOn('chat:job_error', (info: { job_id: string; error: string }) => {
+      setBackgroundJobs(prev => prev.map(j =>
+        j.job_id === info.job_id ? { ...j, state: 'error', progress: info.error } : j
+      ));
+    });
+
     return () => {
       offToken();
       offDone();
@@ -230,6 +279,10 @@ function App() {
       offTitleUpdated();
       offPhase();
       offReport();
+      offJobStarted();
+      offJobProgress();
+      offJobCompletedAsk();
+      offJobError();
     };
   }, []);
 
@@ -326,6 +379,44 @@ function App() {
   function handleMITLReject() {
     setMitlRequest(null);
     RejectMITL();
+  }
+
+  function handleJobAccept() {
+    if (!jobCompletedAsk) return;
+    const jobID = jobCompletedAsk.job_id;
+    setJobCompletedAsk(null);
+    setStreaming(true);
+    AcceptJobResult(jobID);
+    ReviewJobResult(jobID).then((msg) => {
+      setMessages(prev => [...prev, msg as unknown as Message]);
+      setStreaming(false);
+      setBackgroundJobs(prev => prev.map(j =>
+        j.job_id === jobID ? { ...j, reviewed: true } : j
+      ));
+      refreshStatus();
+    }).catch(() => {
+      setStreaming(false);
+    });
+  }
+
+  function handleJobDefer() {
+    if (!jobCompletedAsk) return;
+    DeferJobResult(jobCompletedAsk.job_id);
+    setJobCompletedAsk(null);
+  }
+
+  function handleJobCardClick(jobID: string) {
+    setStreaming(true);
+    ReviewJobResult(jobID).then((msg) => {
+      setMessages(prev => [...prev, msg as unknown as Message]);
+      setStreaming(false);
+      setBackgroundJobs(prev => prev.map(j =>
+        j.job_id === jobID ? { ...j, reviewed: true } : j
+      ));
+      refreshStatus();
+    }).catch(() => {
+      setStreaming(false);
+    });
   }
 
   async function handleNewSession() {
@@ -1049,6 +1140,53 @@ function App() {
               <div className="mitl-actions">
                 <button className="mitl-approve" onClick={handleMITLApprove}>Approve</button>
                 <button className="mitl-reject" onClick={handleMITLReject}>Reject</button>
+              </div>
+            </div>
+          )}
+
+          {/* Background job cards */}
+          {backgroundJobs.length > 0 && (
+            <div className="job-cards">
+              {backgroundJobs.map(job => (
+                <div key={job.job_id} className={`job-card job-${job.state}`}
+                     onClick={job.state === 'done' && !job.reviewed ? () => handleJobCardClick(job.job_id) : undefined}
+                     style={{ cursor: job.state === 'done' && !job.reviewed ? 'pointer' : 'default' }}>
+                  <div className="job-card-header">
+                    <span className="job-card-icon">
+                      {job.state === 'running' ? '\u23F3' : job.state === 'done' ? '\u2705' : '\u274C'}
+                    </span>
+                    <span className="job-card-title">
+                      {job.state === 'running' ? 'Analysis Running' : job.state === 'done' ? (job.reviewed ? 'Analysis Complete' : 'Analysis Complete (click to review)') : 'Analysis Failed'}
+                    </span>
+                    <span className="job-card-time">{job.started_at}</span>
+                  </div>
+                  <div className="job-card-prompt">{job.prompt}</div>
+                  <div className="job-card-progress">{job.progress}</div>
+                </div>
+              ))}
+            </div>
+          )}
+
+          {/* Job completion dialog (MITL-style) */}
+          {jobCompletedAsk && (
+            <div className="mitl-dialog job-completed-dialog">
+              <div className="mitl-header">
+                <span className="mitl-icon">{'\u2705'}</span>
+                <span>Background Analysis Complete</span>
+              </div>
+              <div className="mitl-body">
+                <div className="mitl-tool-name">
+                  <span className="mitl-label">Prompt:</span>
+                  <span>{jobCompletedAsk.prompt}</span>
+                </div>
+                <div className="mitl-tool-name">
+                  <span className="mitl-label">Findings:</span>
+                  <span>{jobCompletedAsk.finding_count} items</span>
+                </div>
+              </div>
+              <div className="mitl-actions">
+                <button className="mitl-approve" onClick={handleJobAccept}>Review Now</button>
+                <button className="mitl-reject" onClick={handleJobDefer}>Later</button>
               </div>
             </div>
           )}

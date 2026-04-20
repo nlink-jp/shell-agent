@@ -205,6 +205,28 @@ export namespace main {
 		    return a;
 		}
 	}
+	export class JobCardInfo {
+	    job_id: string;
+	    prompt: string;
+	    started_at: string;
+	    progress: string;
+	    state: string;
+	    reviewed: boolean;
+	
+	    static createFrom(source: any = {}) {
+	        return new JobCardInfo(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.job_id = source["job_id"];
+	        this.prompt = source["prompt"];
+	        this.started_at = source["started_at"];
+	        this.progress = source["progress"];
+	        this.state = source["state"];
+	        this.reviewed = source["reviewed"];
+	    }
+	}
 	export class LLMStatus {
 	    current_time: string;
 	    hot_messages: number;

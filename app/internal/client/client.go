@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"strings"
 	"time"
@@ -28,6 +29,10 @@ func New(endpoint, model, apiKey string) *Client {
 		apiKey:   apiKey,
 		httpClient: &http.Client{
 			Timeout: 5 * time.Minute,
+			Transport: &http.Transport{
+				DialContext:         (&net.Dialer{Timeout: 10 * time.Second}).DialContext,
+				TLSHandshakeTimeout: 10 * time.Second,
+			},
 		},
 	}
 }

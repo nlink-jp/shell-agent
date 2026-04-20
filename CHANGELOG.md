@@ -7,6 +7,19 @@ All notable changes to this project will be documented in this file.
 ### Fixed
 - Remove `replace` directive for nlk in go.mod — use published `github.com/nlink-jp/nlk v0.5.1` to enable building on any machine without local lib-series checkout
 
+## [0.7.5] - 2026-04-20
+
+### Fixed
+- **RWMutex deadlock in restartGuardians**: `GetTools()` called while holding write lock caused reentrant RLock deadlock — every startup was affected
+- **Guardian Start() timeout**: 15-second timeout prevents app hang when MCP server doesn't respond to initialization RPC
+- **HTTP client connection timeout**: 10-second dial timeout surfaces unreachable API servers quickly instead of 5-minute hang
+- **Comprehensive session concurrency**: `sessionMu` now protects ALL session access sites — `buildMessages` (snapshot-copy), `generateTitleIfNeeded`, `compactMemoryIfNeeded`, `extractPinnedMemories`, `listImagesTool`, `createReportTool`, `autoSave`, `GetLLMStatus` (HotTokenCount inside lock)
+- **restartGuardians EventsEmit deadlock**: Events emitted AFTER releasing guardiansMu to prevent frontend callback deadlock
+- **Structured logging**: `internal/logger` package replaces all `fmt.Printf` — stderr + `app.log` with component tags, severity levels, 10MB rotation
+
+### Added
+- `internal/logger` package: structured logging with component tags (startup, chat, agent, mcp, tool, memory), severity levels (INFO/WARN/ERROR/DEBUG), dual output (stderr + file)
+
 ## [0.7.4] - 2026-04-19
 
 ### Security

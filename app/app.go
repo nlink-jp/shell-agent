@@ -612,7 +612,7 @@ func (a *App) RefreshTools() ([]ToolInfo, error) {
 
 // GetLLMStatus returns the current LLM state for monitoring.
 func (a *App) GetLLMStatus() LLMStatus {
-	var hot, warm, cold int
+	var hot, warm, cold, tokensUsed int
 	a.sessionMu.Lock()
 	if a.session != nil {
 		for _, r := range a.session.Records {
@@ -625,21 +625,22 @@ func (a *App) GetLLMStatus() LLMStatus {
 				cold++
 			}
 		}
+		tokensUsed = a.session.HotTokenCount()
 	}
 	a.sessionMu.Unlock()
 	ts := a.snapshotTokenStats()
 	return LLMStatus{
-		CurrentTime:      time.Now().Format("2006-01-02 15:04:05"),
-		HotMessages:      hot,
-		WarmSummaries:    warm,
-		ColdSummaries:    cold,
-		TokensUsed:       a.session.HotTokenCount(),
-		TokenLimit:       a.cfg.Memory.HotTokenLimit,
-		SessionInput:     ts.TotalInput,
-		SessionOutput:    ts.TotalOutput,
-		SessionTotal:     ts.TotalInput + ts.TotalOutput,
-		LastInput:        ts.LastInput,
-		LastOutput:       ts.LastOutput,
+		CurrentTime:   time.Now().Format("2006-01-02 15:04:05"),
+		HotMessages:   hot,
+		WarmSummaries: warm,
+		ColdSummaries: cold,
+		TokensUsed:    tokensUsed,
+		TokenLimit:    a.cfg.Memory.HotTokenLimit,
+		SessionInput:  ts.TotalInput,
+		SessionOutput: ts.TotalOutput,
+		SessionTotal:  ts.TotalInput + ts.TotalOutput,
+		LastInput:     ts.LastInput,
+		LastOutput:    ts.LastOutput,
 	}
 }
 
@@ -841,18 +842,14 @@ func (a *App) RestartGuardians() int {
 
 // restartGuardians stops all running guardians and starts new ones from config.
 func (a *App) restartGuardians() {
-	a.guardiansMu.Lock()
-	defer a.guardiansMu.Unlock()
-
 	log := logger.New("mcp")
 
-	// Stop existing
+	// Phase 1: stop existing and start new guardians under write lock
+	a.guardiansMu.Lock()
 	for name, g := range a.guardians {
 		_ = g.Stop()
 		log.Info("[%s] stopped", name)
 	}
-
-	// Start new
 	a.guardians = make(map[string]*mcp.Guardian)
 	for _, gc := range a.cfg.Guardians {
 		if gc.BinaryPath == "" || gc.Name == "" {
@@ -870,40 +867,22 @@ func (a *App) restartGuardians() {
 			log.Info("[%s] started: %d tools", gc.Name, len(g.Tools()))
 		}
 	}
+	a.guardiansMu.Unlock()
 
-	// Refresh tools in frontend
-	// Note: build tool list inline instead of calling GetTools() which would
-	// try to acquire guardiansMu.RLock — deadlock since we hold the write lock.
-	var infos []ToolInfo
-	for name, g := range a.guardians {
-		for _, t := range g.Tools() {
-			toolName := "mcp__" + name + "__" + t.Name
-			infos = append(infos, ToolInfo{
-				Name:        toolName,
-				Description: "[" + name + "] " + t.Description,
-				Category:    "mcp",
-				Enabled:     !a.isToolDisabled(toolName),
-			})
-		}
-	}
-	for _, t := range a.tools.List() {
-		infos = append(infos, ToolInfo{
-			Name:        t.Name,
-			Description: t.Description,
-			Category:    string(t.Category),
-			Enabled:     !a.isToolDisabled(t.Name),
-		})
-	}
+	// Phase 2: notify frontend AFTER releasing lock to avoid deadlock
+	// (EventsEmit can trigger frontend callbacks that call GetTools/etc.)
+	infos := a.GetTools()
 	wailsRuntime.EventsEmit(a.ctx, "chat:tools_updated", infos)
 }
 
 // generateTitleIfNeeded generates a session title from the first exchange.
 func (a *App) generateTitleIfNeeded() {
+	// Snapshot under lock
+	a.sessionMu.Lock()
 	if a.session.Title != "New Chat" {
+		a.sessionMu.Unlock()
 		return
 	}
-
-	// Need at least one user message
 	var firstUser string
 	for _, r := range a.session.Records {
 		if r.Role == "user" && r.Tier == memory.TierHot {
@@ -911,15 +890,17 @@ func (a *App) generateTitleIfNeeded() {
 			break
 		}
 	}
+	a.sessionMu.Unlock()
+
 	if firstUser == "" {
 		return
 	}
 
+	// LLM call outside lock
 	prompt := []client.Message{
 		client.TextMessage("system", "Generate a very short title (under 30 chars) for a chat that starts with the following message. Reply with ONLY the title, no quotes, no explanation. Use the same language as the message."),
 		client.TextMessage("user", firstUser),
 	}
-
 	resp, err := a.llm.Chat(prompt, nil)
 	if err != nil {
 		return
@@ -927,7 +908,9 @@ func (a *App) generateTitleIfNeeded() {
 	if len(resp.Choices) > 0 {
 		title := strings.TrimSpace(resp.Choices[0].Message.Content)
 		if title != "" && len(title) < 60 {
+			a.sessionMu.Lock()
 			a.session.Title = title
+			a.sessionMu.Unlock()
 			wailsRuntime.EventsEmit(a.ctx, "chat:title_updated", title)
 		}
 	}
@@ -935,29 +918,33 @@ func (a *App) generateTitleIfNeeded() {
 
 // compactMemoryIfNeeded summarizes old hot records into warm when token limit is exceeded.
 func (a *App) compactMemoryIfNeeded() {
+	// Read under lock
+	a.sessionMu.Lock()
 	hotTokens := a.session.HotTokenCount()
 	limit := a.cfg.Memory.HotTokenLimit
 	if hotTokens <= limit {
+		a.sessionMu.Unlock()
 		return
 	}
-
-	excess := hotTokens - (limit * 3 / 4) // compact to 75% of limit
+	excess := hotTokens - (limit * 3 / 4)
 	toSummarize := a.session.PromoteOldestHotToWarm(excess)
+	a.sessionMu.Unlock()
+
 	if len(toSummarize) == 0 {
 		return
 	}
 
-	// Build summarization prompt
+	// Build prompt from snapshot (no lock needed — toSummarize is a copy)
 	var content string
 	for _, r := range toSummarize {
 		content += fmt.Sprintf("[%s %s] %s\n", r.Timestamp.Format("15:04:05"), r.Role, r.Content)
 	}
-
 	summaryPrompt := []client.Message{
 		client.TextMessage("system", "Summarize the following conversation concisely, preserving key facts, decisions, and time references. Write in the same language as the conversation."),
 		client.TextMessage("user", content),
 	}
 
+	// LLM call outside lock
 	resp, err := a.llm.Chat(summaryPrompt, nil)
 	if err != nil {
 		logger.New("memory").Error("summarization: %v", err)
@@ -966,10 +953,13 @@ func (a *App) compactMemoryIfNeeded() {
 
 	if len(resp.Choices) > 0 {
 		summary := resp.Choices[0].Message.Content
+		a.sessionMu.Lock()
 		a.session.ApplySummary(toSummarize, summary)
+		hotAfter := a.session.HotTokenCount()
+		a.sessionMu.Unlock()
 		wailsRuntime.EventsEmit(a.ctx, "chat:memory_compacted", map[string]any{
 			"summarized_count": len(toSummarize),
-			"hot_tokens":       a.session.HotTokenCount(),
+			"hot_tokens":       hotAfter,
 		})
 	}
 }
@@ -980,18 +970,20 @@ func (a *App) extractPinnedMemories() {
 		return
 	}
 
-	// Get the last few hot messages for analysis
+	// Snapshot recent hot messages under lock
+	a.sessionMu.Lock()
 	hot := a.session.HotRecords()
 	if len(hot) < 2 {
+		a.sessionMu.Unlock()
 		return
 	}
-
-	// Only analyze the latest exchange (last 4 messages max)
 	start := len(hot) - 4
 	if start < 0 {
 		start = 0
 	}
-	recent := hot[start:]
+	recent := make([]memory.Record, len(hot[start:]))
+	copy(recent, hot[start:])
+	a.sessionMu.Unlock()
 
 	var conversation string
 	for _, r := range recent {
@@ -1250,6 +1242,8 @@ func base64Encode(data []byte) string {
 }
 
 func (a *App) autoSave() {
+	a.sessionMu.Lock()
+	defer a.sessionMu.Unlock()
 	if a.store != nil && a.session != nil {
 		_ = a.store.Save(a.session)
 	}
@@ -1282,7 +1276,13 @@ func (a *App) buildMessages(systemPrompt string) []client.Message {
 		client.TextMessage("system", fullSystem),
 	}
 
-	for _, r := range a.session.Records {
+	// Snapshot records under lock to avoid data race with Wails bindings
+	a.sessionMu.Lock()
+	records := make([]memory.Record, len(a.session.Records))
+	copy(records, a.session.Records)
+	a.sessionMu.Unlock()
+
+	for _, r := range records {
 		switch r.Tier {
 		case memory.TierWarm, memory.TierCold:
 			if r.SummaryRange != nil {
@@ -1461,17 +1461,20 @@ func (a *App) handleBuiltinTool(name, args string) (string, bool) {
 }
 
 func (a *App) listImagesTool() string {
+	a.sessionMu.Lock()
+	records := make([]memory.Record, len(a.session.Records))
+	copy(records, a.session.Records)
+	a.sessionMu.Unlock()
+
 	var entries []string
-	for _, r := range a.session.Records {
+	for _, r := range records {
 		if len(r.Images) == 0 {
 			continue
 		}
 		for _, img := range r.Images {
-			// Find the assistant's description of this image (next assistant message)
 			desc := "(no description yet)"
-			for _, r2 := range a.session.Records {
+			for _, r2 := range records {
 				if r2.Role == "assistant" && r2.Timestamp.After(r.Timestamp) {
-					// Use first 100 chars of the response as description
 					d := r2.Content
 					if len(d) > 100 {
 						d = d[:100] + "..."
@@ -1519,6 +1522,7 @@ func (a *App) createReportTool(argsJSON string) string {
 		imageIDs = append(imageIDs, e.ID)
 	}
 
+	a.sessionMu.Lock()
 	a.session.Records = append(a.session.Records, memory.Record{
 		Timestamp: time.Now(),
 		Role:      "report",
@@ -1527,6 +1531,7 @@ func (a *App) createReportTool(argsJSON string) string {
 		Report:    &memory.ReportData{Title: args.Title, Filename: filename},
 		Images:    reportImageEntries,
 	})
+	a.sessionMu.Unlock()
 
 	// Emit report with ImageStore IDs (not data URLs)
 	wailsRuntime.EventsEmit(a.ctx, "chat:report", map[string]any{

@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.7.9] - 2026-04-20
+
+### Fixed
+- Default `startup_mode` set to `"last"` — new installs restore previous session
+- SQL in tool output wrapped in code blocks at source — prevents `*`, `|`, `_` from breaking Markdown rendering
+
 ## [0.7.8] - 2026-04-20
 
 ### Fixed

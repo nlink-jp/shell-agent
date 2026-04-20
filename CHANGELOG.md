@@ -2,72 +2,65 @@
 
 All notable changes to this project will be documented in this file.
 
-## [0.7.5] - 2026-04-20
+## [0.7.7] - 2026-04-20
 
-### Fixed
-- Remove `replace` directive for nlk in go.mod — use published `github.com/nlink-jp/nlk v0.5.1` to enable building on any machine without local lib-series checkout
+### Changed
+- `analyze-bg` replaced with `analyze-data`: in-process synchronous execution instead of detached background process — avoids GPU/CPU contention on local LLM environments
+- Dynamic tool filtering: analysis tools only exposed when data is loaded (9 tools without data vs 15 with)
+- Removed: JobMonitor, job cards, completion dialog, analysis-status/analysis-result tools (-729 lines)
+
+### Added
+- Processing guard: warns before quit or session switch during active analysis/tool execution
+- Version in startup log and `GetVersion()` binding
 
 ## [0.7.6] - 2026-04-20
 
 ### Added
-- Background job monitor with completion notification (JobMonitor)
-- Job cards in chat area: running/done/error state with live progress updates
-- MITL-style completion dialog: "Review Now" triggers LLM to summarize report; "Later" defers to card click
-- `ReviewJobResult`, `GetBackgroundJobs`, `AcceptJobResult`, `DeferJobResult` Wails bindings
 - Sample tool scripts auto-installed on first launch (list-files, write-note, weather, get-location)
 - Example tool scripts for gem-search and gem-image (tools/examples/)
-- Structured logging: `internal/logger` package (stderr + app.log, component tags, 10MB rotation)
-
-### Fixed
-- RWMutex deadlock in restartGuardians (GetTools called under write lock)
-- Guardian Start() 15-second timeout (prevents indefinite hang on unresponsive MCP)
-- HTTP client 10-second connection timeout
-- Comprehensive session concurrency (sessionMu on all access sites, snapshot-copy in buildMessages)
-- restartGuardians EventsEmit moved outside lock to prevent frontend callback deadlock
-- analyze-bg tool description updated to prevent LLM from promising notifications
 
 ## [0.7.5] - 2026-04-20
 
 ### Fixed
-- **RWMutex deadlock in restartGuardians**: `GetTools()` called while holding write lock caused reentrant RLock deadlock — every startup was affected
-- **Guardian Start() timeout**: 15-second timeout prevents app hang when MCP server doesn't respond to initialization RPC
-- **HTTP client connection timeout**: 10-second dial timeout surfaces unreachable API servers quickly instead of 5-minute hang
-- **Comprehensive session concurrency**: `sessionMu` now protects ALL session access sites — `buildMessages` (snapshot-copy), `generateTitleIfNeeded`, `compactMemoryIfNeeded`, `extractPinnedMemories`, `listImagesTool`, `createReportTool`, `autoSave`, `GetLLMStatus` (HotTokenCount inside lock)
-- **restartGuardians EventsEmit deadlock**: Events emitted AFTER releasing guardiansMu to prevent frontend callback deadlock
-- **Structured logging**: `internal/logger` package replaces all `fmt.Printf` — stderr + `app.log` with component tags, severity levels, 10MB rotation
+- RWMutex deadlock in restartGuardians (GetTools called under write lock — caused startup hang)
+- Guardian Start() 15-second timeout (prevents indefinite hang on unresponsive MCP)
+- HTTP client 10-second connection timeout
+- Comprehensive session concurrency (sessionMu on all access sites, snapshot-copy in buildMessages)
+- restartGuardians EventsEmit moved outside lock to prevent frontend callback deadlock
+- Remove `replace` directive for nlk in go.mod — use published v0.5.1 for portable builds
 
 ### Added
-- `internal/logger` package: structured logging with component tags (startup, chat, agent, mcp, tool, memory), severity levels (INFO/WARN/ERROR/DEBUG), dual output (stderr + file)
+- Structured logging: `internal/logger` package (stderr + app.log, component tags, severity levels, 10MB rotation)
 
 ## [0.7.4] - 2026-04-19
 
 ### Security
-- `session.Records` concurrent access: `sessionMu` guards append (agent loop) and range (Wails bindings) to prevent data race
-- `guardians` map rebuild race: `guardiansMu` (RWMutex) protects all reads (`GetTools`, `buildToolDefs`, `handleToolCall`) during `restartGuardians` rebuild
-- HTTP error body truncated to 512 bytes via `io.LimitReader` to prevent internal server details from leaking into LLM context
-- `osascript` clipboard command uses `%q` for path quoting to prevent injection via poisoned `TMPDIR`
+- `session.Records` concurrent access: `sessionMu` guards append and range to prevent data race
+- `guardians` map rebuild race: `guardiansMu` (RWMutex) protects all read paths during restartGuardians
+- HTTP error body truncated to 512 bytes via `io.LimitReader`
+- `osascript` clipboard command uses `%q` for path quoting
 
 ## [0.7.3] - 2026-04-19
 
 ### Security
-- Arbitrary file read via tool result JSON: `extractImageFromResult` now delegates to `fileToDataURL`, inheriting its allowlist of base directories so tool / LLM-supplied `"path":"/etc/passwd"` is rejected instead of returned to the frontend as a base64 data URL
-- Path traversal via `analysis-status` / `analysis-result` `job_id`: LLM-supplied IDs are validated against the `job-<digits>` pattern before being passed to `filepath.Join(analysisDir, ...)`
-- API key no longer exposed in `ps` output: background `analyze` subprocess receives the key via the `SHELL_AGENT_API_KEY` environment variable instead of `--api-key` CLI argument
-- `IsReadOnlySQL` whitespace bypass: dangerous keyword detection rewritten with regex word boundaries (so `DROP\tTABLE` and `DELETE\nFROM` are caught), comments and string literals stripped before scanning, multiple statements rejected, and `LOAD` / `INSTALL` / `PRAGMA` / `EXECUTE` / `VACUUM` added to the deny list (DuckDB extensions can run native code)
-- MCP Guardian stdio race: `Stop()` is now mutex-guarded and idempotent, and `call()` refuses requests after stop instead of write-after-close on the stdin pipe
-- Token-stat data race: `App.tokenStats` is now protected by `statsMu`; reads from Wails bindings (`GetLLMStatus`) and writes from the agent loop are serialized
+- Arbitrary file read via `extractImageFromResult`: now delegates to `fileToDataURL` allowlist
+- Path traversal via `analysis-status`/`analysis-result` job_id: validated against `job-<digits>` pattern
+- API key no longer exposed in `ps` output: passed via `SHELL_AGENT_API_KEY` env var
+- `IsReadOnlySQL` rewritten: regex word boundaries, comment/string-literal stripping, multi-statement rejection, DuckDB extension denylists (LOAD/INSTALL/PRAGMA/EXECUTE/VACUUM)
+- MCP Guardian stdio race: `Stop()` mutex-guarded and idempotent
+- Token-stat data race: `statsMu` + accessor functions
 
 ## [0.7.2] - 2026-04-19
 
 ### Fixed
-- Directory traversal bypass via relative paths: all candidate paths now resolved to absolute via `filepath.Abs()` before allowlist validation, with separator-aware prefix matching
+- Directory traversal bypass via relative paths: `filepath.Abs()` + separator-aware prefix matching
 
 ## [0.7.1] - 2026-04-19
 
 ### Fixed
-- Directory traversal prevention in image loading (`fileToDataURL`): path normalization with `filepath.Clean()` and allowlist check for base directories
-- SQL read-only enforcement at application layer: `IsReadOnlySQL()` blocks INSERT/UPDATE/DELETE/DROP/ALTER/CREATE/TRUNCATE in `query-sql`, `query-preview`, and `quick-summary` tools
-- Tool script security guidelines added to README (stdin JSON passing, eval/unquoted expansion warnings)
+- Directory traversal prevention in `fileToDataURL`: `filepath.Clean()` + allowlist
+- SQL read-only enforcement: `IsReadOnlySQL()` at application layer
+- Tool script security guidelines added to README
 
 ## [0.7.0] - 2026-04-19
 
@@ -80,16 +73,12 @@ All notable changes to this project will be documented in this file.
 - LLM-based analysis perspective suggestion (`suggest-analysis` tool)
 - Quick summary of query results via LLM (`quick-summary` tool)
 - Sliding window summarization engine for large dataset analysis
-- Background analysis via detached process — survives app shutdown (`analyze-bg` tool)
-- Background job status tracking with `status.json` (`analysis-status` tool)
-- Background job report retrieval (`analysis-result` tool)
 - Analysis database reset (`reset-analysis` tool)
 - `analyze` subcommand for background analysis mode (single binary, no separate build)
 - Prompt injection defense (nlk/guard) in SQL generation and window analysis prompts
 - Token estimation with dual word/char-based strategy (CJK aware)
 - Finding severity classification and priority-based eviction
 - Markdown report generation from analysis results (severity-grouped findings)
-- DB copy for background jobs to avoid DuckDB file-level locking conflicts
 
 ### Changed
 - Makefile: added `-tags no_duckdb_arrow` (Arrow interface unused, database/sql only)
@@ -124,156 +113,52 @@ All notable changes to this project will be documented in this file.
 ## [0.5.0] - 2026-04-18
 
 ### Added
-- Simple agent loop with tool-calling feedback (replaced ReAct)
-- Gemma-4 native tool call tag parser (`<|tool_call>call:name{args}<tool_call|>`)
-- Tool name fuzzy matching (e.g., `weather:get_current_weather` → `weather`)
-- Agent debug logging (`~/Library/.../shell-agent/logs/react.log`)
-- Tool execution parameter display inline
-- `create-report` built-in tool: markdown reports with image gallery
-- Report fullscreen overlay (Expand/Copy/Save)
-- Report persistence in session JSON with ImageStore refs
-- Image copy to clipboard (macOS osascript) and save to file (native dialog)
-- Image actions on hover (Copy/Save) + lightbox toolbar
-- Markdown save with inline base64 images (single file, no collision)
-
-### Changed
-- Image handling unified: all references use ImageStore IDs
-- No data URL round-trips between frontend/backend
-- Frontend image cache keyed by ImageStore ID with lazy loading
-- System prompt tuned: prefer conversation history over redundant tool calls
-- Phase display reset at turn start
-- Session records never deleted (removed cleanEphemeralMessages)
-- Default hot_token_limit raised to 65536 (auto-correct below 8192)
-- Report content in LLM context truncated to 200 chars
-- `truncate()` uses rune-based slicing for multibyte safety
-
-### Removed
-- ReAct Plan/Execute/Summarize phases (too complex for local LLMs)
-- Plan display UI
-- Tool list in system prompt (tools via API parameter only)
-- cleanEphemeralMessages (session records preservation)
-
-### Fixed
-- Gemma tool call leakage in text-only API responses
-- Report role mapped to assistant for API compatibility
-- Lightbox z-index above report overlay
-- MITL dialog width constrained
-
-### Known Issues
-- Q4_K_M quantization degrades tool calling accuracy; Q8 recommended
-- Multi-step tool workflows depend on model capability
-- Image data handling needs central repository (planned for v0.6.0)
+- Report generation tool (`create-report`) with Markdown output
+- Image gallery display (separate from inline markdown)
+- Fullscreen image overlay with Copy and Save actions
+- `SaveReport` saves self-contained Markdown with inline base64 images
+- Report records in session history (role: "report")
+- Image references in reports via `![desc](image:ID)` syntax
 
 ## [0.4.0] - 2026-04-18
 
 ### Added
-- Tool enable/disable toggle per tool in Tools panel
-- Disabled tools excluded from LLM and listed in system prompt
-- Available tools listed in system prompt for context awareness
-- Bulk delete for sessions and pinned memories (Select → All/None → Delete)
-- Sidebar collapse/expand with persistent state
-- Sidebar resizable by dragging (180-500px)
-- Sidebar bottom navigation: Sessions, New Chat, Tools, Status, Settings
-- ESC to cancel ongoing LLM requests (HTTP context cancellation)
-- Input history (Up/Down arrows, max 50)
-- Copy button on message bubbles
-- Token usage per message (in/out) and session totals in Status
-- Token info persisted in session JSON
-- Cmd+Enter to send (Slack-compatible)
-- Single newline rendering via remark-breaks
-- MCP guardian restart button and hot-reload on settings save
-- Configurable max tool rounds (default 10)
-- Tool execution images persisted for session restore
-
-### Changed
-- ChatInput extracted to memo'd component (major input performance fix)
-- Image data URLs stored in ref cache, not React state
-- Status polling removed (on-demand only)
-- System prompt: proactive tool usage instruction
-- Stale tool instruction messages cleaned per turn
-- Tool list sorted alphabetically
-
-### Fixed
-- Empty `required` array for parameterless tools (API 400 error)
-- Sidebar state (width, collapsed) persisted across restarts
-- Window shutdown preserves sidebar state
-- Session deletion clears chat window
-- New sessions saved to disk immediately
-- MITL dialog auto-scroll
-- Leaked timestamps stripped from LLM responses
-- Fake tool call JSON detection and removal
+- Agent loop with simple tool-calling feedback loop
+- Gemma-4 native tag parser (`<|tool_call>call:name{args}<tool_call|>`)
+- Fuzzy tool name matching (contains-based fallback)
+- Tool execution phase display in chat
+- Agent loop debug logging (`logs/react.log`)
+- Timestamp leak stripping from LLM responses
 
 ## [0.3.0] - 2026-04-18
 
 ### Added
-- Job workspace system: each tool execution gets a unique job ID, temp directory, and persistent blob storage
-- SHELL_AGENT_WORK_DIR environment variable passed to tool scripts
-- Bilingual pinned memory: English + native language expressions
-- Pinned memory edit (double-click) and delete (with confirmation) in Status tab
-- Pinned memory timestamps displayed
-- Tool execution indicator: spinning "Executing: tool-name" display
-- Tool execution timeout (3 minutes) to prevent hangs
-- Tool retry: up to 3 rounds of tool calls per turn
-- Location tool script (get-location): timezone-based inference, no external API
-- Weather tool script (weather): JMA XML feed with region alias mapping
-- Web search tool script (web-search): wraps gem-search CLI
-- Image generation tool script (generate-image): wraps gem-image CLI with job workspace
-- Blob artifact images displayed in tool results
-- view-image tool searches blob storage directories
-- Right-click context menu enabled for DevTools access
+- Color themes: Dark, Light (cream + blue), Warm (brown), Midnight (navy)
+- CSS custom properties for full theme customization
+- Sidebar with collapse/resize and bottom navigation
+- Session management: auto-generated titles, rename, delete with confirmation
+- Startup mode: new chat or resume last session
+- Window state persistence (position, size, sidebar state)
+- Token tracking (input/output per message and session total)
+- ESC key cancel, input history (Up/Down), copy button
 
-### Changed
-- ChatInput extracted to separate React component (memo'd) for input performance
-- Image data URLs stored in ref cache instead of React state
-- Status polling removed (update on message send only)
-- Stale tool instruction messages cleaned at start of each turn
-- System messages hidden from session restore UI
-- Tool results stored as "tool" role in memory (converted to "user" for LLM API)
-- MITL buttons use opaque backgrounds with white text for all-theme readability
-- LLM response text: bare image filenames and markdown image refs stripped
-- Explicit timezone in system prompt (JST UTC+09:00)
-- Leaked [HH:MM:SS] timestamps stripped from LLM responses
-
-### Fixed
-- Empty `required` array (was null) for parameterless tools causing API 400 error
-- Empty LLM responses no longer create blank message bubbles
-- Success/failure differentiated system messages prevent unnecessary tool re-calls
-
-## [0.2.0] - 2026-04-18
+## [0.2.0] - 2026-04-17
 
 ### Added
-- Color theme switching: Dark, Light (cream + blue), Warm (brown), Midnight (navy)
-- Theme selector in Settings → Appearance with live preview
-- Configurable startup mode: "New Chat" or "Resume Last Chat"
-- Last session ID auto-saved on shutdown for resume
-
-### Changed
-- All CSS colors migrated to CSS custom properties for theming
-- Guardian "Add" button uses theme-aware colors instead of hardcoded purple
-
-## [0.1.0] - 2026-04-18
-
-### Added
-- Wails v2 + React + TypeScript project scaffold
-- Go backend: chat, client, config, mcp, memory, toolcall packages
-- OpenAI-compatible API client (non-streaming for tool calls)
-- Multi-turn chat with Markdown rendering (react-markdown, remark-gfm, rehype-highlight)
-- Shell script Tool Calling with header-based auto-discovery (@tool, @description, @param, @category)
-- MITL (Man-In-The-Loop) approval UI for write/execute operations
-- Agent loop with tool execution and result summarization
-- Hot/Warm/Cold memory tiers with LLM-powered summarization
-- Pinned Memory — autonomous important fact extraction across sessions
-- Timestamp injection for temporal awareness in conversations
+- MCP support via mcp-guardian (multiple servers, stdio JSON-RPC 2.0)
 - Multimodal image support (drag & drop, paste, file picker)
-- Smart image recall — only latest image sent as data, past images via view-image tool
-- Image lightbox for full-size viewing
-- MCP support via mcp-guardian (multiple servers, stdio child processes)
-- SwiftUI menu bar launcher with global hotkey (Ctrl+Shift+Space)
-- Settings UI (API, memory, tools, MCP guardians)
-- Session management (auto-generated titles, rename, delete with confirmation)
-- Window position and size persistence
-- IME composition guard (ref-based with 50ms delay for WebKit)
-- Security: nlk/guard (prompt injection), nlk/jsonfix (JSON repair), nlk/strip (thinking tags)
-- Path expansion (~, $ENV) in all config paths
-- Custom app icon
-- RFP documentation (Japanese and English)
+- Smart image recall (latest as data URL, older via view-image tool)
+- SwiftUI menu bar launcher with Ctrl+Shift+Space hotkey
+- nlk security integration (guard, jsonfix, strip)
+- Settings UI for API, memory, tools, MCP guardians
+- Pinned Memory (bilingual autonomous fact extraction)
+
+## [0.1.0] - 2026-04-17
+
+### Added
+- Initial scaffold: Wails v2 + React + Go backend
+- Multi-turn chat with OpenAI-compatible API (LM Studio)
+- Shell script Tool Calling with MITL approval
+- Hot/Warm/Cold memory tiers with LLM summarization
+- Markdown rendering with syntax highlighting
+- Japanese IME composition handling

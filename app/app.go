@@ -107,7 +107,6 @@ type App struct {
 	// Analysis engine (DuckDB)
 	analysis      *analysis.Engine
 	analysisDir   string // directory for analysis results
-	jobMonitor    *JobMonitor
 
 	// Security: nonce tag for prompt injection defense (rotated per turn)
 	guardTag guard.Tag
@@ -230,10 +229,6 @@ func (a *App) startup(ctx context.Context) {
 		a.NewSession()
 		log.Info("new session")
 	}
-
-	// Initialize job monitor for async tasks
-	a.jobMonitor = newJobMonitor()
-	a.jobMonitor.SetContext(ctx)
 
 	// Initialize analysis engine (DuckDB)
 	a.analysisDir = filepath.Join(config.ConfigDir(), "analysis")
@@ -616,60 +611,6 @@ func (a *App) RefreshTools() ([]ToolInfo, error) {
 		return nil, err
 	}
 	return a.GetTools(), nil
-}
-
-// GetBackgroundJobs returns all tracked background jobs for the frontend.
-func (a *App) GetBackgroundJobs() []JobCardInfo {
-	if a.jobMonitor == nil {
-		return nil
-	}
-	return a.jobMonitor.GetJobs()
-}
-
-// AcceptJobResult is called when user clicks "Review now" on a completed job.
-func (a *App) AcceptJobResult(jobID string) {
-	if a.jobMonitor != nil {
-		a.jobMonitor.AcceptJobResult(jobID)
-	}
-}
-
-// DeferJobResult is called when user clicks "Later" on a completed job.
-func (a *App) DeferJobResult(jobID string) {
-	if a.jobMonitor != nil {
-		a.jobMonitor.DeferJobResult(jobID)
-	}
-}
-
-// ReviewJobResult triggers the LLM to read and present a completed job's report.
-// Called from frontend when user clicks a completed job card.
-func (a *App) ReviewJobResult(jobID string) (ChatMessage, error) {
-	if !isValidAnalysisJobID(jobID) {
-		return ChatMessage{}, fmt.Errorf("invalid job_id")
-	}
-
-	reportPath := filepath.Join(a.analysisDir, jobID, "report.md")
-	data, err := os.ReadFile(reportPath)
-	if err != nil {
-		return ChatMessage{}, fmt.Errorf("report not found for %s", jobID)
-	}
-
-	report := string(data)
-	if len(report) > 10000 {
-		report = report[:10000] + "\n\n... (truncated)"
-	}
-
-	// Inject as tool result and trigger agent loop
-	a.sessionMu.Lock()
-	a.session.Records = append(a.session.Records, memory.Record{
-		Timestamp: time.Now(),
-		Role:      "tool",
-		Content:   fmt.Sprintf("[Background analysis %s completed]\n\n%s", jobID, report),
-		Tier:      memory.TierHot,
-	})
-	a.sessionMu.Unlock()
-
-	// Trigger LLM to respond
-	return a.sendMessage(fmt.Sprintf("Background analysis %s has completed. Please summarize the results.", jobID), nil)
 }
 
 // GetVersion returns the build version string.
@@ -1514,12 +1455,8 @@ func (a *App) handleBuiltinTool(name, args string) (string, bool) {
 		return a.suggestAnalysisTool(), true
 	case "quick-summary":
 		return a.quickSummaryTool(args), true
-	case "analyze-bg":
-		return a.analyzeBgTool(args), true
-	case "analysis-status":
-		return a.analysisStatusTool(args), true
-	case "analysis-result":
-		return a.analysisResultTool(args), true
+	case "analyze-data":
+		return a.analyzeDataTool(args), true
 	case "reset-analysis":
 		return a.resetAnalysisTool(), true
 	default:
@@ -2213,7 +2150,12 @@ func (a *App) quickSummaryTool(argsJSON string) string {
 	return fmt.Sprintf("SQL: %s\nRows: %d\n\nSummary:\n%s", sqlStr, result.RowCount, summary)
 }
 
-func (a *App) analyzeBgTool(argsJSON string) string {
+// analyzeDataTool runs sliding window analysis in-process (synchronous).
+// On local LLM environments, background analysis competes for the same
+// GPU/CPU resources as the chat, so in-process execution is more practical.
+// The "analyze" CLI subcommand remains available for detached execution
+// when the user explicitly needs it (e.g., app shutdown during analysis).
+func (a *App) analyzeDataTool(argsJSON string) string {
 	if a.analysis == nil {
 		return "Error: analysis engine not available"
 	}
@@ -2228,56 +2170,83 @@ func (a *App) analyzeBgTool(argsJSON string) string {
 		return "Error: prompt is required"
 	}
 
-	// Create job output directory
-	jobID := fmt.Sprintf("job-%d", time.Now().UnixMilli())
-	outputDir := filepath.Join(a.analysisDir, jobID)
-	if err := os.MkdirAll(outputDir, 0o755); err != nil {
-		return fmt.Sprintf("Error creating output dir: %v", err)
+	log := logger.New("analyze")
+	log.Info("starting in-process analysis: %s", args.Prompt)
+
+	// Determine target table
+	tableName := args.Table
+	if tableName == "" {
+		tables := a.analysis.Tables()
+		if len(tables) > 0 {
+			tableName = tables[0].Name
+		}
+	}
+	if tableName == "" {
+		return "Error: no tables loaded. Use load-data first."
 	}
 
-	// Copy DuckDB to job directory to avoid file-level locking conflict.
-	// DuckDB allows only one writer per file; the main app holds the original open.
-	jobDBPath := filepath.Join(outputDir, "analysis.duckdb")
-	if err := copyFile(a.analysis.DBPath(), jobDBPath); err != nil {
-		return fmt.Sprintf("Error copying database: %v", err)
-	}
-
-	// Get the path to our own executable
-	selfPath, err := os.Executable()
+	// Get all rows
+	result, err := a.analysis.Execute(context.Background(),
+		fmt.Sprintf("SELECT * FROM %s", tableName))
 	if err != nil {
-		return fmt.Sprintf("Error: cannot find executable: %v", err)
+		return fmt.Sprintf("Error reading table: %v", err)
+	}
+	if result.Error != "" {
+		return fmt.Sprintf("Query error: %s", result.Error)
 	}
 
-	// Spawn detached analysis process with the copied DB
-	cmdArgs := []string{
-		"analyze",
-		"--db", jobDBPath,
-		"--api", a.cfg.API.Endpoint,
-		"--model", a.cfg.API.Model,
-		"--prompt", args.Prompt,
-		"--output", outputDir,
-	}
-	if args.Table != "" {
-		cmdArgs = append(cmdArgs, "--table", args.Table)
+	rows := analysis.ResultToRows(result)
+	log.Info("loaded %d rows from %s", len(rows), tableName)
+
+	// Emit progress to frontend
+	wailsRuntime.EventsEmit(a.ctx, "chat:job_started", map[string]string{
+		"job_id": "inline",
+		"prompt": args.Prompt,
+	})
+
+	// Run sliding window analysis using the app's own LLM client
+	schema, _ := a.analysis.LoadSchema(context.Background())
+	builder := analysis.NewPromptBuilder(schema)
+	adapter := analysis.NewClientAdapter(a.llm)
+	cfg := analysis.DefaultSummarizerConfig()
+	summarizer := analysis.NewSummarizer(adapter, builder, cfg)
+
+	analyzeResult, err := summarizer.Analyze(context.Background(), args.Prompt, rows,
+		func(idx, total int, status string) {
+			log.Info("window %d/%d: %s", idx+1, total, status)
+			wailsRuntime.EventsEmit(a.ctx, "chat:job_progress", map[string]string{
+				"job_id":   "inline",
+				"progress": status,
+				"state":    "running",
+			})
+		},
+	)
+	if err != nil {
+		wailsRuntime.EventsEmit(a.ctx, "chat:job_error", map[string]string{
+			"job_id": "inline",
+			"error":  err.Error(),
+		})
+		return fmt.Sprintf("Analysis error: %v", err)
 	}
 
-	cmd := exec.Command(selfPath, cmdArgs...)
-	cmd.SysProcAttr = detachedProcAttr()
-	// Pass API key via environment variable rather than CLI arg so it does
-	// not appear in `ps` output. The child reads SHELL_AGENT_API_KEY in cli.go.
-	if a.cfg.API.APIKey != "" {
-		cmd.Env = append(os.Environ(), "SHELL_AGENT_API_KEY="+a.cfg.API.APIKey)
-	}
-	if err := cmd.Start(); err != nil {
-		return fmt.Sprintf("Error starting background analysis: %v", err)
-	}
+	// Generate report
+	reporter := analysis.NewReportGenerator()
+	report := reporter.GenerateResultReport(args.Prompt, analyzeResult)
 
-	// Register with job monitor for progress tracking and completion notification
-	if a.jobMonitor != nil {
-		a.jobMonitor.Track(jobID, args.Prompt, outputDir)
-	}
+	log.Info("analysis complete: %d windows, %d findings, %s",
+		analyzeResult.Windows, len(analyzeResult.Findings), analyzeResult.Duration.Round(time.Second))
 
-	return fmt.Sprintf("Background analysis started.\nJob ID: %s\nProgress and completion will be shown in the UI.", jobID)
+	wailsRuntime.EventsEmit(a.ctx, "chat:job_progress", map[string]string{
+		"job_id":   "inline",
+		"progress": fmt.Sprintf("complete: %d findings", len(analyzeResult.Findings)),
+		"state":    "done",
+	})
+
+	// Return report directly as tool result (LLM will summarize)
+	if len(report) > 10000 {
+		report = report[:10000] + "\n\n... (truncated)"
+	}
+	return report
 }
 
 // isValidAnalysisJobID returns true if id matches the "job-<digits>" pattern
@@ -2555,8 +2524,8 @@ func (a *App) analysisTools() []client.Tool {
 		{
 			Type: "function",
 			Function: client.ToolFunction{
-				Name:        "analyze-bg",
-				Description: "Start a background analysis that runs independently. Use for large datasets or deep analysis that takes time. The analysis continues even if Shell Agent is closed. The user will be notified in the UI when the analysis completes — do NOT promise to notify them yourself or say you will check status automatically.",
+				Name:        "analyze-data",
+				Description: "Run deep analysis on loaded data using sliding window summarization. Analyzes all rows, identifies patterns, anomalies, and generates findings with severity levels. Results are returned directly.",
 				Parameters: map[string]any{
 					"type": "object",
 					"properties": map[string]any{
@@ -2570,40 +2539,6 @@ func (a *App) analysisTools() []client.Tool {
 						},
 					},
 					"required": []string{"prompt"},
-				},
-			},
-		},
-		{
-			Type: "function",
-			Function: client.ToolFunction{
-				Name:        "analysis-status",
-				Description: "Check the status of background analysis jobs. Call with no arguments to list all jobs.",
-				Parameters: map[string]any{
-					"type": "object",
-					"properties": map[string]any{
-						"job_id": map[string]any{
-							"type":        "string",
-							"description": "Job ID to check (omit to list all jobs)",
-						},
-					},
-					"required": []string{},
-				},
-			},
-		},
-		{
-			Type: "function",
-			Function: client.ToolFunction{
-				Name:        "analysis-result",
-				Description: "Retrieve the report from a completed background analysis.",
-				Parameters: map[string]any{
-					"type": "object",
-					"properties": map[string]any{
-						"job_id": map[string]any{
-							"type":        "string",
-							"description": "Job ID of the completed analysis",
-						},
-					},
-					"required": []string{"job_id"},
 				},
 			},
 		},

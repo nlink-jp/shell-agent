@@ -7,6 +7,25 @@ All notable changes to this project will be documented in this file.
 ### Fixed
 - Remove `replace` directive for nlk in go.mod — use published `github.com/nlink-jp/nlk v0.5.1` to enable building on any machine without local lib-series checkout
 
+## [0.7.6] - 2026-04-20
+
+### Added
+- Background job monitor with completion notification (JobMonitor)
+- Job cards in chat area: running/done/error state with live progress updates
+- MITL-style completion dialog: "Review Now" triggers LLM to summarize report; "Later" defers to card click
+- `ReviewJobResult`, `GetBackgroundJobs`, `AcceptJobResult`, `DeferJobResult` Wails bindings
+- Sample tool scripts auto-installed on first launch (list-files, write-note, weather, get-location)
+- Example tool scripts for gem-search and gem-image (tools/examples/)
+- Structured logging: `internal/logger` package (stderr + app.log, component tags, 10MB rotation)
+
+### Fixed
+- RWMutex deadlock in restartGuardians (GetTools called under write lock)
+- Guardian Start() 15-second timeout (prevents indefinite hang on unresponsive MCP)
+- HTTP client 10-second connection timeout
+- Comprehensive session concurrency (sessionMu on all access sites, snapshot-copy in buildMessages)
+- restartGuardians EventsEmit moved outside lock to prevent frontend callback deadlock
+- analyze-bg tool description updated to prevent LLM from promising notifications
+
 ## [0.7.5] - 2026-04-20
 
 ### Fixed

@@ -205,6 +205,9 @@ func (a *App) startup(ctx context.Context) {
 	}
 	a.pinned = pinned
 
+	// Install sample tool scripts if tools directory is empty (first launch)
+	installSampleTools()
+
 	a.tools = toolcall.NewRegistry(config.ExpandPath(cfg.Tools.ScriptDir))
 	if err := a.tools.Scan(); err != nil {
 		log.Warn("tool scan: %v", err)

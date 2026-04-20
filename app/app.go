@@ -1920,12 +1920,21 @@ func (a *App) buildToolDefs() []client.Tool {
 		})
 	}
 	log.Debug("shell: %d total so far", len(tools))
-	// Add analysis tools (skip disabled)
+	// Add analysis tools — only include the full set when data is loaded.
+	// When no tables exist, only expose load-data and reset-analysis to keep
+	// the tool count low (local LLMs degrade with 15+ tool definitions).
+	hasData := a.analysis != nil && len(a.analysis.Tables()) > 0
 	for _, t := range a.analysisTools() {
-		if !a.isToolDisabled(t.Function.Name) {
-			tools = append(tools, t)
+		if a.isToolDisabled(t.Function.Name) {
+			continue
 		}
+		name := t.Function.Name
+		if !hasData && name != "load-data" && name != "reset-analysis" {
+			continue
+		}
+		tools = append(tools, t)
 	}
+	log.Debug("final: %d tools (analysis data loaded: %v)", len(tools), hasData)
 	return tools
 }
 

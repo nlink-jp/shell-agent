@@ -53,11 +53,47 @@ func NewEngine(dbPath string) (*Engine, error) {
 		return nil, fmt.Errorf("open duckdb: %w", err)
 	}
 
-	return &Engine{
+	eng := &Engine{
 		db:     db,
 		dbPath: dbPath,
 		tables: make(map[string]*TableMeta),
-	}, nil
+	}
+
+	// Rebuild table metadata from existing database tables.
+	// DuckDB persists tables to disk, but our in-memory metadata map
+	// is lost on restart. This restores it so dynamic tool filtering
+	// and schema context work correctly after session restore.
+	if err := eng.rebuildTableMeta(); err != nil {
+		// Non-fatal: tables exist but metadata is missing — tools still work,
+		// just without descriptions until user re-describes.
+		_ = err
+	}
+
+	return eng, nil
+}
+
+// rebuildTableMeta scans the database for existing tables and populates
+// the in-memory metadata map. Called on engine creation to restore state
+// after app restart.
+func (e *Engine) rebuildTableMeta() error {
+	ctx := context.Background()
+	rows, err := e.db.QueryContext(ctx, "SHOW TABLES")
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		var name string
+		if err := rows.Scan(&name); err != nil {
+			continue
+		}
+		// refreshTableMeta populates columns, row count, and sample data
+		if _, err := e.refreshTableMeta(ctx, name, ""); err != nil {
+			continue
+		}
+	}
+	return rows.Err()
 }
 
 // Close closes the database connection.

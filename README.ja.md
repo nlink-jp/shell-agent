@@ -1,5 +1,15 @@
 # shell-agent
 
+> **⚠️ アーカイブ済み (2026-05-23)。**
+> shell-agent は
+> [**shell-agent-v2**](https://github.com/nlink-jp/shell-agent-v2)
+> に後継統合されました。v2 はローカル LLM チャット / MCP / シェル
+> スクリプト Tool Calling + MITL / DuckDB 分析を継承しつつ、
+> セッションスコープメモリ、ハイブリッド LLM (ローカル + Vertex AI)、
+> コンテナサンドボックス、グローバル Findings、統一 MITL を追加した
+> アクティブメンテナンス版です。v1 の今後のリリースは予定していません。
+> タグ済みリリース (〜v0.7.9) とソースは参照用に残します。
+
 ローカルLLMを活用したmacOS GUIチャット＆エージェントツール。
 
 ## 機能

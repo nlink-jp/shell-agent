@@ -1,5 +1,16 @@
 # shell-agent
 
+> **⚠️ Archived (2026-05-23).**
+> shell-agent has been **superseded by
+> [shell-agent-v2](https://github.com/nlink-jp/shell-agent-v2)**, which
+> is the actively maintained Wails + React rewrite. shell-agent-v2
+> carries forward the local-LLM chat, MCP support, shell-script tool
+> calling with MITL, and DuckDB analysis — and adds session-scoped
+> memory, hybrid LLM (local + Vertex AI), container sandbox, global
+> Findings, and a unified MITL surface. No further releases of v1 are
+> planned. Tagged releases up to v0.7.9 and the source tree remain
+> available for reference.
+
 A macOS GUI chat and agent tool powered by local LLM.
 
 ## Features
